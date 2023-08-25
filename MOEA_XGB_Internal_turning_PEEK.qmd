@@ -1,0 +1,3253 @@
+---
+title: "Multi-objective evolutionary optimization of extreme gradient boosting regression models of the internal turning of PEEK tubes"
+author: "Jéssica Tito Vieira, Robson Bruno Dutra Pereira, Carlos Henrique Lauro, Lincoln Cardoso Brandão, João Roberto Ferreira"
+format: 
+  html:
+    fig-width: 8
+    fig-height: 4
+editor: visual
+---
+
+## Loading libraries
+
+```{r, message = F, warning=FALSE}
+library(rsm)
+library(DiceDesign)
+library(caret)
+library(dplyr)
+library(splines)
+library(e1071)
+library(xgboost)
+library(randomForest)
+library(dplyr)
+library(ggplot2)
+library(mco)
+library(plot3D)
+library(emoa)
+library(caRamel)
+library(ggpubr)
+```
+
+## Experimental design
+
+Central composite design with Faure sampling aditional points:
+
+```{r}
+plan_ccd <- ccd(basis = ~x1+x2+x3, 
+            n0 = c(0,8),
+            alpha = "rotatable",
+            randomize = F,
+            coding = list (x1 ~ (vc - 250)/85, 
+                           x2 ~ (f - 0.125)/0.04, 
+                           x3 ~ (fp - 15)/8))
+
+plan_ccd$vc <- plan_ccd$x1*85 + 250
+plan_ccd$f  <- plan_ccd$x2*0.04 + 0.125
+plan_ccd$fp <- plan_ccd$x3*8 + 15
+
+plan_ccd <-  data.frame(plan_ccd)
+
+set.seed(10)
+f <- runif.faure(8,3)
+
+f$design[,1] <- (f$design[,1] - 0.5)/0.5
+f$design[,2] <- (f$design[,2] - 0.5)/0.5
+f$design[,3] <- (f$design[,3] - 0.5)/0.5
+
+plan_faure <- cbind(23:30, 23:30,
+                    f$design, rep("3",8))
+
+plan_faure <- data.frame(plan_faure)
+plan_faure$X1 <- as.numeric(plan_faure$X1)
+plan_faure$X2 <- as.numeric(plan_faure$X2)
+plan_faure$X3 <- as.numeric(plan_faure$X3)
+plan_faure$X4 <- as.numeric(plan_faure$X4)
+plan_faure$X5 <- as.numeric(plan_faure$X5)
+
+f$design[,1] <- f$design[,1]*85 + 250
+f$design[,2] <- f$design[,2]*0.04 + 0.125
+f$design[,3] <- f$design[,3]*8 + 15
+
+plan_faure <- cbind(plan_faure, f$design)
+
+colnames(plan_faure) <- c("run.order", "std.order", 
+                          "x1", "x2", "x3", "Block", "vc", "f", "fp")
+
+plan <- rbind(plan_ccd, plan_faure)
+
+plan$std.order <- 1:30
+
+set.seed(10)
+runorder <- sample(30, 30, replace = F)
+plan$run.order <- runorder
+head(plan)
+
+# write.csv(plan, file = "plan.csv")
+```
+
+## Responses reading
+
+```{r}
+respostas <- read.csv("Respostas.csv")
+plan_respostas <- cbind(plan,respostas)
+head(plan_respostas)
+```
+
+## RSM model selection
+
+Function to calculate model performance metrics:
+
+```{r}
+metrics <- function(pred, obs) {
+  
+  RSE <- sum((obs - pred)^2)
+  SST <- sum((obs - mean(obs))^2)
+  R2 <- 1 - RSE/SST 
+  
+  MSE <-  mean((obs - pred)^2)
+  
+  RMSE <- sqrt(mean((obs - pred)^2))
+  
+  MAE <-  mean(abs(obs - pred))
+  
+  return(
+    data.frame(RMSE = RMSE,
+               MSE = MSE,
+               R2 = R2, 
+               MAE = MAE))
+}
+```
+
+RSM model reduction through backward elimination for Ra:
+
+```{r}
+compRa <- lm(Ra ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+            data = plan_respostas)
+summary(compRa)
+
+red_compRa <- step(compRa)
+summary(red_compRa)
+```
+
+RSM model comparison through k-fold for Ra:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ra <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  lm_Ra1 <- lm(Ra ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+               data = plan.tr)
+
+  lm_Ra2 <- lm(Ra ~ x1 + x2 + I(x2^2),
+               data = plan.tr)
+
+  assign(paste0("rsm_Ra1.", i), lm_Ra1) 
+  assign(paste0("rsm_Ra2.", i), lm_Ra2) 
+  
+  res.teste.lm_Ra1 <- predict(lm_Ra1, newdata = plan_respostas[fold,])
+  res.teste.lm_Ra2 <- predict(lm_Ra2, newdata = plan_respostas[fold,])
+  
+  testee.rsm1 <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.lm_Ra1)
+  testee.rsm2 <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.lm_Ra2)
+
+  res.teste.rsm1 <- data.frame(
+    rsm.Ra = defaultSummary(testee.rsm1))
+  res.teste.rsm2 <- data.frame(
+    rsm.Ra = defaultSummary(testee.rsm2))
+  
+  assign(paste0("res.teste.rsm1", i), t(res.teste.rsm1))
+  assign(paste0("res.teste.rsm2", i), t(res.teste.rsm2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ra[j:(j+1),1] <- i
+  res.teste_Ra[j:(j+1),2] <- c("rsm1", "rsm2")
+  
+  res.teste_Ra[j,3:5]   <- t(res.teste.rsm1)
+  res.teste_Ra[j+1,3:5] <- t(res.teste.rsm2)
+
+}
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ra)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ra)
+res2
+
+```
+
+RSM model reduction through backward elimination for Fc:
+
+```{r}
+compFc <- lm(Fc ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+            data = plan_respostas)
+summary(compFc)
+
+red_compFc <- step(compFc)
+summary(red_compFc)
+```
+
+RSM model comparison through k-fold for Fc:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Fc <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  lm_Fc1 <- lm(Fc ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+               data = plan.tr)
+
+  lm_Fc2 <- lm(Fc ~ x1 + x2 + I(x2^2),
+               data = plan.tr)
+
+  assign(paste0("rsm_Fc1.", i), lm_Fc1) 
+  assign(paste0("rsm_Fc2.", i), lm_Fc2) 
+  
+  res.teste.lm_Fc1 <- predict(lm_Fc1, newdata = plan_respostas[fold,])
+  res.teste.lm_Fc2 <- predict(lm_Fc2, newdata = plan_respostas[fold,])
+  
+  testee.rsm1 <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.lm_Fc1)
+  testee.rsm2 <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.lm_Fc2)
+
+  res.teste.rsm1 <- data.frame(
+    rsm.Fc = defaultSummary(testee.rsm1))
+  res.teste.rsm2 <- data.frame(
+    rsm.Fc = defaultSummary(testee.rsm2))
+  
+  assign(paste0("res.teste.rsm1", i), t(res.teste.rsm1))
+  assign(paste0("res.teste.rsm2", i), t(res.teste.rsm2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Fc[j:(j+1),1] <- i
+  res.teste_Fc[j:(j+1),2] <- c("rsm1", "rsm2")
+  
+  res.teste_Fc[j,3:5]   <- t(res.teste.rsm1)
+  res.teste_Fc[j+1,3:5] <- t(res.teste.rsm2)
+
+}
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Fc)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Fc)
+res2
+
+```
+
+RSM model reduction through backward elimination for Ront:
+
+```{r}
+compRont <- lm(Fc ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+            data = plan_respostas)
+summary(compRont)
+
+red_compRont <- step(compRont)
+summary(red_compRont)
+```
+
+RSM model comparison through k-fold for Ront:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ront <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  lm_Ront1 <- lm(Ront ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
+               data = plan.tr)
+
+  lm_Ront2 <- lm(Ront ~ x1 + x2 + I(x2^2),
+               data = plan.tr)
+
+  assign(paste0("rsm_Ront1.", i), lm_Ront1) 
+  assign(paste0("rsm_Ront2.", i), lm_Ront2) 
+  
+  res.teste.lm_Ront1 <- predict(lm_Ront1, newdata = plan_respostas[fold,])
+  res.teste.lm_Ront2 <- predict(lm_Ront2, newdata = plan_respostas[fold,])
+  
+  testee.rsm1 <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.lm_Ront1)
+  testee.rsm2 <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.lm_Ront2)
+
+  res.teste.rsm1 <- data.frame(
+    rsm.Ront = defaultSummary(testee.rsm1))
+  res.teste.rsm2 <- data.frame(
+    rsm.Ront = defaultSummary(testee.rsm2))
+  
+  assign(paste0("res.teste.rsm1", i), t(res.teste.rsm1))
+  assign(paste0("res.teste.rsm2", i), t(res.teste.rsm2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ront[j:(j+1),1] <- i
+  res.teste_Ront[j:(j+1),2] <- c("rsm1", "rsm2")
+  
+  res.teste_Ront[j,3:5]   <- t(res.teste.rsm1)
+  res.teste_Ront[j+1,3:5] <- t(res.teste.rsm2)
+
+}
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ront)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ront)
+res2
+
+```
+
+## GAM model selection
+
+GAM model reduction through backward elimination for Ra:
+
+```{r}
+comp1 <- lm(Ra ~ ns(x1,3) + ns(x2,3) + ns(x3,3),
+            data = plan_respostas)
+summary(comp1)
+
+red_comp1 <- step(comp1)
+summary(red_comp1)
+```
+
+GAM model comparison through k-fold for Ra:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ra <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  gam_Ra1 <- lm(Ra ~ ns(x1,3) + ns(x2,3) + ns(x3,3), plan.tr)
+  summary(gam_Ra1)
+  
+  gam_Ra2 <- lm(Ra ~  ns(x1, 3) + ns(x2, 3), plan.tr)
+  summary(gam_Ra2)
+  
+  assign(paste0("gam_Ra1.", i), gam_Ra1) 
+  assign(paste0("gam_Ra2.", i), gam_Ra2) 
+  
+  res.teste.lm_Ra1 <- predict(gam_Ra1, newdata = plan_respostas[fold,])
+  res.teste.lm_Ra2 <- predict(gam_Ra2, newdata = plan_respostas[fold,])
+  
+  testee.gam1 <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.lm_Ra1)
+  testee.gam2 <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.lm_Ra2)
+  
+  res.teste.gam1 <- data.frame(
+    gam.Ra = defaultSummary(testee.gam1))
+  res.teste.gam2 <- data.frame(
+    gam.Ra = defaultSummary(testee.gam2))
+  
+  assign(paste0("res.teste.gam1", i), t(res.teste.gam1))
+  assign(paste0("res.teste.gam2", i), t(res.teste.gam2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ra[j:(j+1),1] <- i
+  res.teste_Ra[j:(j+1),2] <- c("gam1", "gam2")
+  
+  res.teste_Ra[j,3:5]   <- t(res.teste.gam1)
+  res.teste_Ra[j+1,3:5] <- t(res.teste.gam2)
+  
+}
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ra)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ra)
+res2
+
+```
+
+GAM model reduction through backward elimination for Fc:
+
+```{r}
+comp1 <- lm(Fc ~ ns(x1,3) + ns(x2,3) + ns(x3,3),
+            data = plan_respostas)
+summary(comp1)
+
+red_comp1 <- step(comp1)
+summary(red_comp1)
+```
+
+GAM model comparison through k-fold for Fc:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Fc <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  gam_Fc1 <- lm(Fc ~ ns(x1,3) + ns(x2,3) + ns(x3,3), plan.tr)
+  summary(gam_Fc1)
+  
+  gam_Fc2 <- lm(Fc ~  ns(x1, 3) + ns(x2, 3), plan.tr)
+  summary(gam_Fc2)
+  
+  assign(paste0("gam_Fc1.", i), gam_Fc1) 
+  assign(paste0("gam_Fc2.", i), gam_Fc2) 
+  
+  res.teste.lm_Fc1 <- predict(gam_Fc1, newdata = plan_respostas[fold,])
+  res.teste.lm_Fc2 <- predict(gam_Fc2, newdata = plan_respostas[fold,])
+  
+  testee.gam1 <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.lm_Fc1)
+  testee.gam2 <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.lm_Fc2)
+  
+  res.teste.gam1 <- data.frame(
+    gam.Fc = defaultSummary(testee.gam1))
+  res.teste.gam2 <- data.frame(
+    gam.Fc = defaultSummary(testee.gam2))
+  
+  assign(paste0("res.teste.gam1", i), t(res.teste.gam1))
+  assign(paste0("res.teste.gam2", i), t(res.teste.gam2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Fc[j:(j+1),1] <- i
+  res.teste_Fc[j:(j+1),2] <- c("gam1", "gam2")
+  
+  res.teste_Fc[j,3:5]   <- t(res.teste.gam1)
+  res.teste_Fc[j+1,3:5] <- t(res.teste.gam2)
+  
+}
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Fc)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Fc)
+res2
+
+```
+
+GAM model reduction through backward elimination for Ront:
+
+```{r}
+comp1 <- lm(Ront ~ ns(x1,3) + ns(x2,3) + ns(x3,3),
+            data = plan_respostas)
+summary(comp1)
+
+red_comp1 <- step(comp1)
+summary(red_comp1)
+```
+
+GAM model comparison through k-fold for Ront:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ront <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  fold <- sample(nr[!is.na(nr)], fr, replace = F)    
+  assign(paste0("fold", i),fold)                     
+  nr[fold] <- NA                                     
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  gam_Ront1 <- lm(Ront ~ ns(x1,3) + ns(x2,3) + ns(x3,3), plan.tr)
+  summary(gam_Ront1)
+  
+  gam_Ront2 <- lm(Ront ~  ns(x1, 3) + ns(x2, 3), plan.tr)
+  summary(gam_Ront2)
+  
+  assign(paste0("gam_Ront1.", i), gam_Ront1) 
+  assign(paste0("gam_Ront2.", i), gam_Ront2) 
+  
+  res.teste.lm_Ront1 <- predict(gam_Ront1, newdata = plan_respostas[fold,])
+  res.teste.lm_Ront2 <- predict(gam_Ront2, newdata = plan_respostas[fold,])
+  
+  testee.gam1 <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.lm_Ront1)
+  testee.gam2 <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.lm_Ront2)
+  
+  res.teste.gam1 <- data.frame(
+    gam.Ront = defaultSummary(testee.gam1))
+  res.teste.gam2 <- data.frame(
+    gam.Ront = defaultSummary(testee.gam2))
+  
+  assign(paste0("res.teste.gam1", i), t(res.teste.gam1))
+  assign(paste0("res.teste.gam2", i), t(res.teste.gam2))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ront[j:(j+1),1] <- i
+  res.teste_Ront[j:(j+1),2] <- c("gam1", "gam2")
+  
+  res.teste_Ront[j,3:5]   <- t(res.teste.gam1)
+  res.teste_Ront[j+1,3:5] <- t(res.teste.gam2)
+  
+}
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ront)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ront)
+res2
+```
+
+## Random forest and GAM tuning
+
+RF and GAM tuning for Ra:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ra <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  # Definindo particao (fold)
+  fold <- sample(nr[!is.na(nr)], fr, replace = F) 
+  assign(paste0("fold", i),fold)                  
+  nr[fold] <- NA                                  
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  bag_Ra <- randomForest(Ra~x1+x2+x3, data = plan.tr,
+                         mtry = 3, importance = TRUE, ntree = 500)
+
+  rf_Ra <- randomForest(Ra~x1+x2+x3, data = plan.tr,
+                        mtry = 2, importance = TRUE, ntree = 500)
+
+  assign(paste0("bag_Ra.", i), bag_Ra) 
+  assign(paste0("rf_Ra.", i), rf_Ra) 
+
+  res.teste.bag_Ra <- predict(bag_Ra, newdata = plan_respostas[fold,])
+  res.teste.rf_Ra <- predict(rf_Ra, newdata = plan_respostas[fold,])
+
+  testee.bag <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.bag_Ra)
+  testee.rf <- data.frame(obs = plan_respostas$Ra[fold], 
+                            pred = res.teste.rf_Ra)
+  
+  res.teste.bag <- data.frame(
+    rsm.Ra = defaultSummary(testee.bag))
+  res.teste.rf <- data.frame(
+    rsm.Ra = defaultSummary(testee.rf))
+  
+  assign(paste0("res.teste.bag", i), t(res.teste.bag))
+  assign(paste0("res.teste.rf", i), t(res.teste.rf))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ra[j:(j+1),1] <- i
+  res.teste_Ra[j:(j+1),2] <- c("bag", "rf")
+  
+  res.teste_Ra[j,3:5]   <- t(res.teste.bag)
+  res.teste_Ra[j+1,3:5] <- t(res.teste.rf)
+  
+}
+
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ra %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ra)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ra)
+res2
+
+```
+
+RF and GAM tuning for Fc:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Fc <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  # Definindo particao (fold)
+  fold <- sample(nr[!is.na(nr)], fr, replace = F) 
+  assign(paste0("fold", i),fold)                  
+  nr[fold] <- NA                                  
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  bag_Fc <- randomForest(Fc~x1+x2+x3, data = plan.tr,
+                         mtry = 3, importance = TRUE, ntree = 500)
+
+  rf_Fc <- randomForest(Fc~x1+x2+x3, data = plan.tr,
+                        mtry = 2, importance = TRUE, ntree = 500)
+
+  assign(paste0("bag_Fc.", i), bag_Fc) 
+  assign(paste0("rf_Fc.", i), rf_Fc) 
+
+  res.teste.bag_Fc <- predict(bag_Fc, newdata = plan_respostas[fold,])
+  res.teste.rf_Fc <- predict(rf_Fc, newdata = plan_respostas[fold,])
+
+  testee.bag <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.bag_Fc)
+  testee.rf <- data.frame(obs = plan_respostas$Fc[fold], 
+                            pred = res.teste.rf_Fc)
+  
+  res.teste.bag <- data.frame(
+    rsm.Fc = defaultSummary(testee.bag))
+  res.teste.rf <- data.frame(
+    rsm.Fc = defaultSummary(testee.rf))
+  
+  assign(paste0("res.teste.bag", i), t(res.teste.bag))
+  assign(paste0("res.teste.rf", i), t(res.teste.rf))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Fc[j:(j+1),1] <- i
+  res.teste_Fc[j:(j+1),2] <- c("bag", "rf")
+  
+  res.teste_Fc[j,3:5]   <- t(res.teste.bag)
+  res.teste_Fc[j+1,3:5] <- t(res.teste.rf)
+  
+}
+
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Fc %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Fc)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Fc)
+res2
+
+```
+
+RF and GAM tuning for Fc:
+
+```{r}
+nr <- 1:nrow(plan_respostas)
+
+prop <- 0.1
+
+nfolds <- round(1/prop,0)
+
+fr <- round(prop*nrow(plan_respostas))
+
+res.teste_Ront <- data.frame(fold = numeric(2*nfolds),
+                           model = numeric(2*nfolds),
+                           RMSE = numeric(2*nfolds),
+                           Rsquared = numeric(2*nfolds),
+                           MAE = numeric(2*nfolds))
+
+set.seed(2)
+
+for (i in 1:nfolds) {
+  
+  # Definindo particao (fold)
+  fold <- sample(nr[!is.na(nr)], fr, replace = F) 
+  assign(paste0("fold", i),fold)                  
+  nr[fold] <- NA                                  
+  
+  plan.tr <- plan_respostas[-fold,]
+  
+  bag_Ront <- randomForest(Ront~x1+x2+x3, data = plan.tr,
+                         mtry = 3, importance = TRUE, ntree = 500)
+
+  rf_Ront <- randomForest(Ront~x1+x2+x3, data = plan.tr,
+                        mtry = 2, importance = TRUE, ntree = 500)
+
+  assign(paste0("bag_Ront.", i), bag_Ront) 
+  assign(paste0("rf_Ront.", i), rf_Ront) 
+
+  res.teste.bag_Ront <- predict(bag_Ront, newdata = plan_respostas[fold,])
+  res.teste.rf_Ront <- predict(rf_Ront, newdata = plan_respostas[fold,])
+
+  testee.bag <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.bag_Ront)
+  testee.rf <- data.frame(obs = plan_respostas$Ront[fold], 
+                            pred = res.teste.rf_Ront)
+  
+  res.teste.bag <- data.frame(
+    rsm.Ront = defaultSummary(testee.bag))
+  res.teste.rf <- data.frame(
+    rsm.Ront = defaultSummary(testee.rf))
+  
+  assign(paste0("res.teste.bag", i), t(res.teste.bag))
+  assign(paste0("res.teste.rf", i), t(res.teste.rf))
+  
+  j <- (i-1)*2+1
+  
+  res.teste_Ront[j:(j+1),1] <- i
+  res.teste_Ront[j:(j+1),2] <- c("bag", "rf")
+  
+  res.teste_Ront[j,3:5]   <- t(res.teste.bag)
+  res.teste_Ront[j+1,3:5] <- t(res.teste.rf)
+  
+}
+
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = mean))
+
+res.teste_Ront %>%
+  group_by(model) %>%
+  summarise_at(vars(RMSE, Rsquared, MAE), list(name = sd))
+
+res <- wilcox.test(RMSE ~ model, res.teste_Ront)
+res
+
+res2 <- wilcox.test(MAE ~ model, res.teste_Ront)
+res2
+
+```
+
+## SVR hyperparameters' selection
+
+Cross-validation to define `kernel` for Ra:
+
+```{r}
+set.seed(1)
+tune.out <- tune(svm, Ra ~ x1+x2+x3, data = plan_respostas, 
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2),
+                               kernel = c("linear", "radial", "polynomial")))
+# summary(tune.out)
+tune.out$best.parameters
+```
+
+Cross validation to define `gamma` and `cost` for Ra:
+
+```{r}
+set.seed(1)
+tune.out1 <- tune(svm, Ra ~ x1+x2+x3, data = plan_respostas, kernel = "linear",
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2)))
+# summary(tune.out1)
+tune.out1$best.parameters
+```
+
+Cross-validation to define `kernel` for Fc:
+
+```{r}
+set.seed(1)
+tune.out <- tune(svm, Fc ~ x1+x2+x3, data = plan_respostas, 
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2),
+                               kernel = c("linear", "radial", "polynomial")))
+# summary(tune.out)
+tune.out$best.parameters
+```
+
+Cross validation to define `gamma` and `cost` for Fc:
+
+```{r}
+set.seed(1)
+tune.out1 <- tune(svm, Fc ~ x1+x2+x3, data = plan_respostas, kernel = "linear",
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2)))
+# summary(tune.out1)
+tune.out1$best.parameters
+```
+
+Cross-validation to define `kernel` for Ront:
+
+```{r}
+set.seed(1)
+tune.out <- tune(svm, Ront ~ x1+x2+x3, data = plan_respostas, 
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2),
+                               kernel = c("linear", "radial", "polynomial")))
+# summary(tune.out)
+tune.out$best.parameters
+```
+
+Cross validation to define `gamma` and `cost` for Ront:
+
+```{r}
+set.seed(1)
+tune.out1 <- tune(svm, Ront ~ x1+x2+x3, data = plan_respostas, kernel = "radial",
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
+                               gamma = c(0, 0.5, 1, 2)))
+# summary(tune.out1)
+tune.out1$best.parameters
+```
+
+## XGB hyperparameters' selection:
+
+XGB hyperparameters' selection for Ra:
+
+```{r, message = F, warning=FALSE}
+set.seed(7)
+
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2, search = "grid")
+
+model_Ra <- train(Ra~x1+x2+x3, data = plan_respostas, method = "xgbTree", trControl = fitControl, verbosity = 0)
+```
+
+```{r}
+model_Ra$bestTune
+```
+
+XGB hyperparameters' selection for Fc:
+
+```{r, message = F, warning=FALSE}
+set.seed(7)
+
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2, search = "grid")
+
+model_Fc <- train(Fc~x1+x2+x3, data = plan_respostas, method = "xgbTree", trControl = fitControl, verbosity = 0)
+```
+
+```{r}
+model_Fc$bestTune
+```
+
+XGB hyperparameters' selection for Ront:
+
+```{r, message = F, warning=FALSE}
+set.seed(7)
+
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2, search = "grid")
+
+model_Ront <- train(Ront~x1+x2+x3, data = plan_respostas, method = "xgbTree", trControl = fitControl, verbosity = 0)
+```
+
+```{r}
+model_Ront$bestTune
+```
+
+## Bootstrap cross-validation for model comparison
+
+### Comparing models for Ra
+
+Models for Ra:
+
+```{r, message = F}
+lm_Ra <- lm(Ra ~ x1 + x2 + I(x2^2), plan_respostas)
+
+gam_Ra <- lm(Ra ~ ns(x1,3) + ns(x2,3), plan_respostas)
+
+bag_Ra <- randomForest(Ra ~ x1+x2+x3, data = plan_respostas,
+                       mtry = 3, importance = TRUE, ntree = 500)
+
+svm_Ra <- svm(Ra ~ x1+x2+x3, data = plan_respostas, kernel = "linear", 
+              cost = 10, gamma = 0)
+
+xgb_Ra <- xgboost(data = as.matrix(plan_respostas[,3:5]), label = plan_respostas$Ra,
+                  nrounds = 50, max_depth = 1, eta = 0.3, gamma = 0, 
+                  colsample_bytree = 0.8, min_child_weight = 1, subsample = 0.75, verbose = 0)
+```
+
+Apparent Performance:
+
+```{r}
+perf_lm  <- metrics(lm_Ra$fitted.values, plan_respostas$Ra)
+perf_gam <- metrics(gam_Ra$fitted.values, plan_respostas$Ra)
+perf_bag <- metrics(bag_Ra$predicted, plan_respostas$Ra)
+perf_svm <- metrics(svm_Ra$fitted, plan_respostas$Ra)
+perf_xgb <- metrics(predict(xgb_Ra, newdata = as.matrix(plan_respostas[,3:5])), plan_respostas$Ra)
+
+data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+           rbind(perf_lm,
+                 perf_gam,
+                 perf_bag,
+                 perf_svm,
+                 perf_xgb))
+```
+
+Bootstrap cross-validation loop for Ra:
+
+```{r, message = F}
+
+nr <- 1:nrow(plan_respostas)
+
+B <- 500
+
+res.teste_Ra <- data.frame(fold = numeric(5*B),
+                            method = character(5*B),
+                            RMSE = numeric(5*B),
+                            MSE = numeric(5*B),
+                            Rsquared = numeric(5*B),
+                            MAE = numeric(5*B))
+
+optm_Ra <- data.frame(fold = numeric(5*B),
+                       method = character(5*B),
+                       RMSE = numeric(5*B),
+                       MSE = numeric(5*B),
+                       Rsquared = numeric(5*B),
+                       MAE = numeric(5*B))
+
+res.out_Ra <- data.frame(fold = numeric(5*B),
+                          method = character(5*B),
+                          RMSE = numeric(5*B),
+                          MSE = numeric(5*B),
+                          Rsquared = numeric(5*B),
+                          MAE = numeric(5*B))
+
+set.seed(4)
+
+for (i in 1:B) {
+  
+  fold <- sample(nr, length(nr), replace = T)          
+  
+  plan.tr <- plan_respostas[fold,]
+  
+  lm_Ra <- lm(Ra ~ x1 + x2 + I(x2^2), plan.tr)
+  
+  gam_Ra <- lm(Ra ~ ns(x1,3) + ns(x2,3), plan.tr)
+  
+  bag_Ra <- randomForest(Ra ~ x1+x2+x3, data = plan.tr,
+                         mtry = 3, importance = TRUE, ntree = 500)
+  
+  svm_Ra <- svm(Ra ~ x1+x2+x3, data = plan.tr, kernel = "linear", 
+                cost = 10, gamma = 0)
+
+  xgb_Ra <- xgboost(data = as.matrix(plan.tr[,3:5]), label = plan.tr$Ra,
+                    nrounds = 50, max_depth = 1, eta = 0.3, gamma = 0, 
+                    colsample_bytree = 0.8, min_child_weight = 1, subsample = 0.75, verbose = 0)
+  
+  perf_boot_lm  <- metrics(lm_Ra$fitted.values, plan.tr$Ra)
+  perf_boot_gam <- metrics(gam_Ra$fitted.values, plan.tr$Ra)
+  perf_boot_bag <- metrics(bag_Ra$predicted, plan.tr$Ra)
+  perf_boot_svm <- metrics(svm_Ra$fitted, plan.tr$Ra)
+  perf_boot_xgb <- metrics(predict(xgb_Ra, newdata = as.matrix(plan.tr[,3:5])), plan.tr$Ra)
+  
+  res.teste.lm_Ra <- predict(lm_Ra, newdata = plan_respostas)
+  res.teste.gam_Ra <- predict(gam_Ra, newdata = plan_respostas)
+  res.teste.bag_Ra <- predict(bag_Ra, newdata = plan_respostas)
+  res.teste.svm_Ra <- predict(svm_Ra, newdata = plan_respostas)
+  res.teste.xgb_Ra <- predict(xgb_Ra, newdata = as.matrix(plan_respostas[,3:5]))
+  
+  testee.rsm <- data.frame(obs = plan_respostas$Ra, 
+                           pred = res.teste.lm_Ra)
+  testee.gam <- data.frame(obs = plan_respostas$Ra, 
+                           pred = res.teste.gam_Ra)
+  testee.bag <- data.frame(obs = plan_respostas$Ra, 
+                           pred = res.teste.bag_Ra)
+  testee.svm <- data.frame(obs = plan_respostas$Ra, 
+                           pred = res.teste.svm_Ra)
+  testee.xgb <- data.frame(obs = plan_respostas$Ra, 
+                           pred = res.teste.xgb_Ra)
+
+  res.teste.rsm <- metrics(testee.rsm$pred, testee.rsm$obs)
+  res.teste.gam <- metrics(testee.gam$pred, testee.gam$obs)
+  res.teste.bag <- metrics(testee.bag$pred, testee.bag$obs)
+  res.teste.svm <- metrics(testee.svm$pred, testee.svm$obs)
+  res.teste.xgb <- metrics(testee.xgb$pred, testee.xgb$obs)
+
+  optm_lm  <- perf_boot_lm  - res.teste.rsm
+  optm_gam <- perf_boot_lm  - res.teste.gam 
+  optm_bag <- perf_boot_bag - res.teste.bag 
+  optm_svm <- perf_boot_svm - res.teste.svm 
+  optm_xgb <- perf_boot_bag - res.teste.xgb 
+
+  j <- (i-1)*5+1
+  
+  res.teste_Ra[j:(j+4),1] <- i
+  res.teste_Ra[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  res.teste_Ra[j,3:6]   <- (res.teste.rsm)
+  res.teste_Ra[j+1,3:6] <- (res.teste.gam)
+  res.teste_Ra[j+2,3:6] <- (res.teste.bag)
+  res.teste_Ra[j+3,3:6] <- (res.teste.svm)
+  res.teste_Ra[j+4,3:6] <- (res.teste.xgb)
+  
+  optm_Ra[j:(j+4),1] <- i
+  optm_Ra[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  optm_Ra[j,3:6]   <- (optm_lm)
+  optm_Ra[j+1,3:6] <- (optm_gam)
+  optm_Ra[j+2,3:6] <- (optm_bag)
+  optm_Ra[j+3,3:6] <- (optm_svm)
+  optm_Ra[j+4,3:6] <- (optm_xgb)
+  
+}
+```
+
+Bootstrap performance for Ra models:
+
+```{r}
+boot_mean <- res.teste_Ra %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+boot_mean <- data.frame(boot_mean)
+boot_mean
+
+boot_median <- res.teste_Ra %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+boot_median <- data.frame(boot_median)
+boot_median
+```
+
+Average optimism for Ra models:
+
+```{r}
+optm_mean <- optm_Ra %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+optm_mean <- data.frame(optm_mean)
+
+optm_median <- optm_Ra %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+optm_median <- data.frame(optm_median)
+```
+
+Optimism corrected performance for Ra models:
+
+```{r}
+opt_corr_mean <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+          rbind(perf_lm - optm_mean[1,2:5],
+          perf_gam - optm_mean[2,2:5],
+          perf_bag - optm_mean[3,2:5],
+          perf_svm - optm_mean[4,2:5],
+          perf_xgb - optm_mean[5,2:5]))
+opt_corr_mean
+
+opt_corr_median <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+  rbind(perf_lm - optm_median[1,2:5],
+          perf_gam - optm_median[2,2:5],
+          perf_bag - optm_median[3,2:5],
+          perf_svm - optm_median[4,2:5],
+          perf_xgb - optm_median[5,2:5]))
+opt_corr_median
+```
+
+Plotting test results for Ra models:
+
+```{r, warning = F}
+ggplot(res.teste_Ra, aes(x = method, y = RMSE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0,1)+  
+  theme(legend.position = "none")
+
+ggplot(res.teste_Ra, aes(x = method, y = Rsquared, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0.25,1) +  
+  theme(legend.position = "none")
+
+ggplot(res.teste_Ra, aes(x = method, y = MAE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0,0.6) +  
+  theme(legend.position = "none")
+```
+
+Kruskal-Wallis test to compare Ra models:
+
+```{r}
+kruskal.test(RMSE ~ method, res.teste_Ra)
+pairwise.wilcox.test(res.teste_Ra$RMSE, res.teste_Ra$method,
+                     p.adjust.method = "BH")
+
+kruskal.test(MAE ~ method, res.teste_Ra)
+pairwise.wilcox.test(res.teste_Ra$MAE, res.teste_Ra$method,
+                     p.adjust.method = "BH")
+```
+
+### Comparing models for Fc
+
+Models for Fc:
+
+```{r, message = F}
+lm_Fc <- lm(Fc ~ x1 + x2 + x3 + I(x2^2) + I(x3^2) + x1:x3, plan_respostas)
+
+gam_Fc <- lm(Fc ~ ns(x2,3) , plan_respostas)
+
+bag_Fc <- randomForest(Fc ~ x1+x2+x3, data = plan_respostas,
+                       mtry = 3, importance = TRUE, ntree = 500)
+
+svm_Fc <- svm(Fc ~ x1+x2+x3, data = plan_respostas, kernel = "linear", 
+              cost = 10, gamma = 0)
+
+xgb_Fc <- xgboost(data = as.matrix(plan_respostas[,3:5]), label = plan_respostas$Fc,
+                  nrounds = 50, max_depth = 2, eta = 0.3, gamma = 0, 
+                  colsample_bytree = 0.8, min_child_weight = 1, subsample = 0.5, verbose = 0)
+```
+
+Apparent performance:
+
+```{r}
+perf_lm  <- metrics(lm_Fc$fitted.values, plan_respostas$Fc)
+perf_gam <- metrics(gam_Fc$fitted.values, plan_respostas$Fc)
+perf_bag <- metrics(bag_Fc$predicted, plan_respostas$Fc)
+perf_svm <- metrics(svm_Fc$fitted, plan_respostas$Fc)
+perf_xgb <- metrics(predict(xgb_Fc, newdata = as.matrix(plan_respostas[,3:5])), plan_respostas$Fc)
+
+data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+           rbind(perf_lm,
+                 perf_gam,
+                 perf_bag,
+                 perf_svm,
+                 perf_xgb))
+```
+
+Botstrap loop for Fc:
+
+```{r, message = F}
+nr <- 1:nrow(plan_respostas)
+
+B <- 500
+
+res.teste_Fc <- data.frame(fold = numeric(5*B),
+                            method = character(5*B),
+                            RMSE = numeric(5*B),
+                            MSE = numeric(5*B),
+                            Rsquared = numeric(5*B),
+                            MAE = numeric(5*B))
+
+optm_Fc <- data.frame(fold = numeric(5*B),
+                       method = character(5*B),
+                       RMSE = numeric(5*B),
+                       MSE = numeric(5*B),
+                       Rsquared = numeric(5*B),
+                       MAE = numeric(5*B))
+
+res.out_Fc <- data.frame(fold = numeric(5*B),
+                          method = character(5*B),
+                          RMSE = numeric(5*B),
+                          MSE = numeric(5*B),
+                          Rsquared = numeric(5*B),
+                          MAE = numeric(5*B))
+
+set.seed(4)
+
+for (i in 1:B) {
+  
+  fold <- sample(nr, length(nr), replace = T)          
+
+  plan.tr <- plan_respostas[fold,]
+  
+  lm_Fc <- lm(Fc ~ x1 + x2 + x3 + I(x2^2) + I(x3^2) + x1:x3, plan.tr)
+  
+  gam_Fc <- lm(Fc ~ ns(x2,3), plan.tr)
+  
+  bag_Fc <- randomForest(Fc ~ x1+x2+x3, data = plan.tr,
+                         mtry = 3, importance = TRUE, ntree = 500)
+  
+  svm_Fc <- svm(Fc ~ x1+x2+x3, data = plan.tr, kernel = "linear", 
+                cost = 10, gamma = 0)
+  
+  xgb_Fc <- xgboost(data = as.matrix(plan.tr[,3:5]), label = plan.tr$Fc,
+                    nrounds = 50, max_depth = 2, eta = 0.3, gamma = 0, 
+                    colsample_bytree = 0.8, min_child_weight = 1, subsample = 0.5, verbose = 0)
+  
+  perf_boot_lm  <- metrics(lm_Fc$fitted.values, plan.tr$Fc)
+  perf_boot_gam <- metrics(gam_Fc$fitted.values, plan.tr$Fc)
+  perf_boot_bag <- metrics(bag_Fc$predicted, plan.tr$Fc)
+  perf_boot_svm <- metrics(svm_Fc$fitted, plan.tr$Fc)
+  perf_boot_xgb <- metrics(predict(xgb_Fc, newdata = as.matrix(plan.tr[,3:5])), plan.tr$Fc)
+  
+  res.teste.lm_Fc <- predict(lm_Fc, newdata = plan_respostas)
+  res.teste.gam_Fc <- predict(gam_Fc, newdata = plan_respostas)
+  res.teste.bag_Fc <- predict(bag_Fc, newdata = plan_respostas)
+  res.teste.svm_Fc <- predict(svm_Fc, newdata = plan_respostas)
+  res.teste.xgb_Fc <- predict(xgb_Fc, newdata = as.matrix(plan_respostas[,3:5]))
+  
+  testee.rsm <- data.frame(obs = plan_respostas$Fc, 
+                           pred = res.teste.lm_Fc)
+  testee.gam <- data.frame(obs = plan_respostas$Fc, 
+                           pred = res.teste.gam_Fc)
+  testee.bag <- data.frame(obs = plan_respostas$Fc, 
+                           pred = res.teste.bag_Fc)
+  testee.svm <- data.frame(obs = plan_respostas$Fc, 
+                           pred = res.teste.svm_Fc)
+  testee.xgb <- data.frame(obs = plan_respostas$Fc, 
+                           pred = res.teste.xgb_Fc)
+  
+  res.teste.rsm <- metrics(testee.rsm$pred, testee.rsm$obs)
+  res.teste.gam <- metrics(testee.gam$pred, testee.gam$obs)
+  res.teste.bag <- metrics(testee.bag$pred, testee.bag$obs)
+  res.teste.svm <- metrics(testee.svm$pred, testee.svm$obs)
+  res.teste.xgb <- metrics(testee.xgb$pred, testee.xgb$obs)
+  
+  optm_lm  <- perf_boot_lm  - res.teste.rsm
+  optm_gam <- perf_boot_lm  - res.teste.gam 
+  optm_bag <- perf_boot_bag - res.teste.bag 
+  optm_svm <- perf_boot_svm - res.teste.svm 
+  optm_xgb <- perf_boot_bag - res.teste.xgb 
+  
+  j <- (i-1)*5+1
+  
+  res.teste_Fc[j:(j+4),1] <- i
+  res.teste_Fc[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  res.teste_Fc[j,3:6]   <- (res.teste.rsm)
+  res.teste_Fc[j+1,3:6] <- (res.teste.gam)
+  res.teste_Fc[j+2,3:6] <- (res.teste.bag)
+  res.teste_Fc[j+3,3:6] <- (res.teste.svm)
+  res.teste_Fc[j+4,3:6] <- (res.teste.xgb)
+  
+  optm_Fc[j:(j+4),1] <- i
+  optm_Fc[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  optm_Fc[j,3:6]   <- (optm_lm)
+  optm_Fc[j+1,3:6] <- (optm_gam)
+  optm_Fc[j+2,3:6] <- (optm_bag)
+  optm_Fc[j+3,3:6] <- (optm_svm)
+  optm_Fc[j+4,3:6] <- (optm_xgb)
+
+}
+```
+
+Bootstrap performance for Fc models:
+
+```{r}
+boot_mean <- res.teste_Fc %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+boot_mean <- data.frame(boot_mean)
+boot_mean
+
+boot_median <- res.teste_Fc %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+boot_median <- data.frame(boot_median)
+boot_median
+```
+
+Average optimism for Fc models:
+
+```{r}
+optm_mean <- optm_Fc %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+optm_mean <- data.frame(optm_mean)
+
+optm_median <- optm_Fc %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+optm_median <- data.frame(optm_median)
+```
+
+Optimism corrected performance for Fc models:
+
+```{r}
+opt_corr_mean <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+          rbind(perf_lm - optm_mean[1,2:5],
+                perf_gam - optm_mean[2,2:5],
+                perf_bag - optm_mean[3,2:5],
+                perf_svm - optm_mean[4,2:5],
+                perf_xgb - optm_mean[5,2:5]))
+opt_corr_mean
+
+opt_corr_median <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+          rbind(perf_lm - optm_median[1,2:5],
+                perf_gam - optm_median[2,2:5],
+                perf_bag - optm_median[3,2:5],
+                perf_svm - optm_median[4,2:5],
+                perf_xgb - optm_median[5,2:5]))
+opt_corr_median
+```
+
+Plotting test results for Fc models:
+
+```{r, warning=FALSE}
+ggplot(res.teste_Fc, aes(x = method, y = RMSE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0,10) +  
+  theme(legend.position = "none")
+
+
+ggplot(res.teste_Fc, aes(x = method, y = Rsquared, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0,1) +  
+  theme(legend.position = "none")
+
+ggplot(res.teste_Fc, aes(x = method, y = MAE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(0.5,7) +  
+  theme(legend.position = "none")
+```
+
+Kruskal-Wallis test to compare Fc models:
+
+```{r}
+kruskal.test(MSE ~ method, res.teste_Fc)
+pairwise.wilcox.test(res.teste_Fc$MSE, res.teste_Fc$method,
+                     p.adjust.method = "BH")
+
+##
+kruskal.test(MAE ~ method, res.teste_Fc)
+pairwise.wilcox.test(res.teste_Fc$MAE, res.teste_Fc$method,
+                     p.adjust.method = "BH")
+```
+
+### Comparing models for Ront
+
+Models for Ront:
+
+```{r, message = F}
+lm_Ront <- lm(Ront ~ x1 + x2 + x3 + x2:x3, plan_respostas)
+
+gam_Ront <- lm(Ront ~ 1, plan_respostas)
+
+bag_Ront <- randomForest(Ront ~ x1+x2+x3, data = plan_respostas,
+                       mtry = 3, importance = TRUE, ntree = 500)
+
+svm_Ront <- svm(Ront ~ x1+x2+x3, data = plan_respostas, kernel = "linear", 
+                cost = 0.1, gamma = 0)
+
+xgb_Ront <- xgboost(data = as.matrix(plan_respostas[,3:5]), label = plan_respostas$Ront, nrounds = 50, max_depth = 1, eta = 0.3, gamma = 0, 
+                    colsample_bytree = 0.6, min_child_weight = 1, subsample = 1, verbose = 0)
+```
+
+Apparent performance of the models for Ront:
+
+```{r}
+perf_lm  <- metrics(lm_Ront$fitted.values, plan_respostas$Ront)
+perf_gam <- metrics(gam_Ront$fitted.values, plan_respostas$Ront)
+perf_bag <- metrics(bag_Ront$predicted, plan_respostas$Ront)
+perf_svm <- metrics(svm_Ront$fitted, plan_respostas$Ront)
+perf_xgb <- metrics(predict(xgb_Ront, newdata = as.matrix(plan_respostas[,3:5])), plan_respostas$Ront)
+
+data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+           rbind(perf_lm,
+                 perf_gam,
+                 perf_bag,
+                 perf_svm,
+                 perf_xgb))
+```
+
+Bootstrap loop for Ront:
+
+```{r, message = F}
+nr <- 1:nrow(plan_respostas)
+
+B <- 500
+
+res.teste_Ront <- data.frame(fold = numeric(5*B),
+                            method = character(5*B),
+                            RMSE = numeric(5*B),
+                            MSE = numeric(5*B),
+                            Rsquared = numeric(5*B),
+                            MAE = numeric(5*B))
+
+optm_Ront <- data.frame(fold = numeric(5*B),
+                       method = character(5*B),
+                       RMSE = numeric(5*B),
+                       MSE = numeric(5*B),
+                       Rsquared = numeric(5*B),
+                       MAE = numeric(5*B))
+
+res.out_Ront <- data.frame(fold = numeric(5*B),
+                          method = character(5*B),
+                          RMSE = numeric(5*B),
+                          MSE = numeric(5*B),
+                          Rsquared = numeric(5*B),
+                          MAE = numeric(5*B))
+
+set.seed(4)
+
+for (i in 1:B) {
+  
+  fold <- sample(nr, length(nr), replace = T)  
+
+  plan.tr <- plan_respostas[fold,]
+  
+  lm_Ront <- lm(Ront ~ x1 + x2 + x3 + x2:x3, plan.tr)
+  
+  gam_Ront <- lm(Ront ~ 1, plan.tr)
+  
+  bag_Ront <- randomForest(Ront ~ x1+x2+x3, data = plan.tr,
+                           mtry = 3, importance = TRUE, ntree = 500)
+  
+  svm_Ront <- svm(Ront ~ x1+x2+x3, data = plan.tr, kernel = "linear", 
+                cost = 0.1, gamma = 0)
+  
+  xgb_Ront <- xgboost(data = as.matrix(plan.tr[,3:5]), label = plan.tr$Ront,
+                      nrounds = 50, max_depth = 1, eta = 0.3, gamma = 0, 
+                      colsample_bytree = 0.6, min_child_weight = 1, subsample = 1, verbose = 0)
+  
+  perf_boot_lm  <- metrics(lm_Ront$fitted.values, plan.tr$Ront)
+  perf_boot_gam <- metrics(gam_Ront$fitted.values, plan.tr$Ront)
+  perf_boot_bag <- metrics(bag_Ront$predicted, plan.tr$Ront)
+  perf_boot_svm <- metrics(svm_Ront$fitted, plan.tr$Ront)
+  perf_boot_xgb <- metrics(predict(xgb_Ront, newdata = as.matrix(plan.tr[,3:5])), plan.tr$Ront)
+  
+  res.teste.lm_Ront <- predict(lm_Ront, newdata = plan_respostas)
+  res.teste.gam_Ront <- predict(gam_Ront, newdata = plan_respostas)
+  res.teste.bag_Ront <- predict(bag_Ront, newdata = plan_respostas)
+  res.teste.svm_Ront <- predict(svm_Ront, newdata = plan_respostas)
+  res.teste.xgb_Ront <- predict(xgb_Ront, newdata = as.matrix(plan_respostas[,3:5]))
+  
+  testee.rsm <- data.frame(obs = plan_respostas$Ront, 
+                           pred = res.teste.lm_Ront)
+  testee.gam <- data.frame(obs = plan_respostas$Ront, 
+                           pred = res.teste.gam_Ront)
+  testee.bag <- data.frame(obs = plan_respostas$Ront, 
+                           pred = res.teste.bag_Ront)
+  testee.svm <- data.frame(obs = plan_respostas$Ront, 
+                           pred = res.teste.svm_Ront)
+  testee.xgb <- data.frame(obs = plan_respostas$Ront, 
+                           pred = res.teste.xgb_Ront)
+  
+  res.teste.rsm <- metrics(testee.rsm$pred, testee.rsm$obs)
+  res.teste.gam <- metrics(testee.gam$pred, testee.gam$obs)
+  res.teste.bag <- metrics(testee.bag$pred, testee.bag$obs)
+  res.teste.svm <- metrics(testee.svm$pred, testee.svm$obs)
+  res.teste.xgb <- metrics(testee.xgb$pred, testee.xgb$obs)
+  
+  optm_lm  <- perf_boot_lm  - res.teste.rsm
+  optm_gam <- perf_boot_lm  - res.teste.gam 
+  optm_bag <- perf_boot_bag - res.teste.bag 
+  optm_svm <- perf_boot_svm - res.teste.svm 
+  optm_xgb <- perf_boot_bag - res.teste.xgb 
+  
+  j <- (i-1)*5+1
+  
+  res.teste_Ront[j:(j+4),1] <- i
+  res.teste_Ront[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  res.teste_Ront[j,3:6]   <- (res.teste.rsm)
+  res.teste_Ront[j+1,3:6] <- (res.teste.gam)
+  res.teste_Ront[j+2,3:6] <- (res.teste.bag)
+  res.teste_Ront[j+3,3:6] <- (res.teste.svm)
+  res.teste_Ront[j+4,3:6] <- (res.teste.xgb)
+  
+  optm_Ront[j:(j+4),1] <- i
+  optm_Ront[j:(j+4),2] <- c("rsm","gam", "bag", "svm", "xgb")
+  
+  optm_Ront[j,3:6]   <- (optm_lm)
+  optm_Ront[j+1,3:6] <- (optm_gam)
+  optm_Ront[j+2,3:6] <- (optm_bag)
+  optm_Ront[j+3,3:6] <- (optm_svm)
+  optm_Ront[j+4,3:6] <- (optm_xgb)
+  
+}
+```
+
+Bootstrap performance for Ront models:
+
+```{r}
+boot_mean <- res.teste_Ront %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+boot_mean <- data.frame(boot_mean)
+boot_mean
+
+boot_median <- res.teste_Ront %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+boot_median <- data.frame(boot_median)
+boot_median
+```
+
+Average optimism for Ront models:
+
+```{r}
+optm_mean <- optm_Ront %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = mean))
+
+optm_mean <- data.frame(optm_mean)
+
+optm_median <- optm_Ront %>%
+  group_by(method) %>%
+  summarise_at(vars(RMSE, MSE, Rsquared, MAE), list(name = median))
+
+optm_median <- data.frame(optm_median)
+```
+
+Optimism corrected performance for Ront models:
+
+```{r}
+opt_corr_mean <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+          rbind(perf_lm - optm_mean[1,2:5],
+                perf_gam - optm_mean[2,2:5],
+                perf_bag - optm_mean[3,2:5],
+                perf_svm - optm_mean[4,2:5],
+                perf_xgb - optm_mean[5,2:5]))
+opt_corr_mean
+
+opt_corr_median <- data.frame(Model = c("rsm","gam", "bag", "svm", "xgb"),
+          rbind(perf_lm - optm_median[1,2:5],
+                perf_gam - optm_median[2,2:5],
+                perf_bag - optm_median[3,2:5],
+                perf_svm - optm_median[4,2:5],
+                perf_xgb - optm_median[5,2:5]))
+opt_corr_median
+```
+
+Plotting the test results for Ront models:
+
+```{r}
+ggplot(res.teste_Ront, aes(x = method, y = RMSE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(10,60) +  
+  theme(legend.position = "none")
+
+ggplot(res.teste_Ront, aes(x = method, y = Rsquared, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(-1,1) +  
+  theme(legend.position = "none")
+
+ggplot(res.teste_Ront, aes(x = method, y = MAE, color = method)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot() + geom_jitter(alpha = 0.25) + theme_bw() + ylim(10,60) +  
+  theme(legend.position = "none")
+```
+
+Kruskal-Wallis test to compare Ront models:
+
+```{r}
+kruskal.test(MSE ~ method, res.teste_Ront)
+pairwise.wilcox.test(res.teste_Ront$MSE, res.teste_Ront$method,
+                     p.adjust.method = "BH")
+
+##
+kruskal.test(MAE ~ method, res.teste_Ront)
+pairwise.wilcox.test(res.teste_Ront$MAE, res.teste_Ront$method,
+                     p.adjust.method = "BH")
+```
+
+## Model interpretation
+
+### Ra XGB model plots
+
+Main effects plots:
+
+```{r}
+x1_grid_Ra <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.1)
+
+p1_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(x1_grid_Ra, 
+                                                                  rep(0, length(x1_grid_Ra)), 
+                                                                  rep(0, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ra vs vc') +
+  xlab('vc') +
+  ylab('Ra') + 
+  ylim(1,7) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+p2_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ra)), 
+                                                                 x1_grid_Ra, 
+                                                                 rep(0, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ra vs f') +
+  xlab('f') +
+  ylab('Ra') + 
+  ylim(1,7) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+p3_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ra)), 
+                                                                 rep(0, length(x1_grid_Ra)),
+                                                                 x1_grid_Ra),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                              )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ra vs fp') +
+  xlab('fp') +
+  ylab('Ra') + 
+  ylim(1,7) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(1.5, 7, 15, 23, 28.5)) + 
+  theme_bw()
+
+ggarrange(p1_Ra, p2_Ra, p3_Ra, nrow = 1)
+```
+
+Interaction plots:
+
+```{r}
+pp_12a_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, newdata = matrix(c(x1_grid_Ra, 
+                                                                          rep(0, length(x1_grid_Ra)), 
+                                                                          rep(0, length(x1_grid_Ra))),
+                                                                        nrow = length(x1_grid_Ra), ncol = 3
+  ))),
+                colour = '0.125', linetype = '0.125')) +
+  ggtitle('Ra vs vc,f') +
+  xlab('vc') +
+  ylab('Ra') + 
+  ylim(1,7) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_12_Ra <- pp_12a_Ra + 
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, newdata = matrix(c(x1_grid_Ra, 
+                                                                          rep(-1, length(x1_grid_Ra)), 
+                                                                          rep(0, length(x1_grid_Ra))),
+                                                                        nrow = length(x1_grid_Ra), ncol = 3
+  ))),
+                colour = '0.085', linetype = '0.085')) +
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, newdata = matrix(c(x1_grid_Ra, 
+                                                                          rep(1, length(x1_grid_Ra)), 
+                                                                          rep(0, length(x1_grid_Ra))),
+                                                                        nrow = length(x1_grid_Ra), ncol = 3
+  ))),
+                colour = '0.165', linetype = '0.165')) + 
+  scale_color_manual(name = "f", 
+                     values = c("0.085" = "orange2", 
+                                "0.125" = "olivedrab3", 
+                                "0.165" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "f", 
+                        values = c("0.085" = "dashed", 
+                                   "0.125" = "longdash", 
+                                   "0.165" = "solid"))
+
+pp_13a_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, newdata = matrix(c(x1_grid_Ra, 
+                                                                          rep(0, length(x1_grid_Ra)), 
+                                                                          rep(0, length(x1_grid_Ra))),
+                                                                        nrow = length(x1_grid_Ra), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Ra vs vc,fp') +
+  xlab('vc') +
+  ylab('Ra') + 
+  ylim(1,7) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_13_Ra <- pp_13a_Ra + 
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(x1_grid_Ra, 
+                                                                 rep(0, length(x1_grid_Ra)), 
+                                                                 rep(-1, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(x1_grid_Ra, 
+                                                                 rep(0, length(x1_grid_Ra)), 
+                                                                 rep(1, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+
+pp_23a_Ra <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, newdata = matrix(c(rep(0, length(x1_grid_Ra)),
+                                                                          x1_grid_Ra, 
+                                                                          rep(0, length(x1_grid_Ra))),
+                                                                        nrow = length(x1_grid_Ra), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Ra vs f,fp') +
+  xlab('f') +
+  ylab('Ra') + 
+  ylim(1,7) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+pp_23_Ra <- pp_23a_Ra + 
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ra)),
+                                                                 x1_grid_Ra, 
+                                                                 rep(-1, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Ra, y = (predict(xgb_Ra, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ra)),
+                                                                 x1_grid_Ra, 
+                                                                 rep(1, length(x1_grid_Ra))),
+                                                               nrow = length(x1_grid_Ra), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+
+ggarrange(pp_12_Ra, pp_13_Ra, pp_23_Ra, nrow = 1)
+```
+
+Contour plots:
+
+```{r, warning = F}
+x1grid <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.05)
+
+grid <- expand.grid(x1 = x1grid,
+                    x2 = x1grid,
+                    x3 = 0)
+
+y_hat_xgb <- predict(xgb_Ra, newdata = as.matrix(grid))
+grid$Ra <- y_hat_xgb
+
+cp1_xgb <- ggplot(data = grid,
+                  mapping = aes(x = x1, y = x2, z = Ra, fill = Ra)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(1,6)) +
+  geom_contour(color = "gray50" , bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  xlab("vc") + ylab("f") + theme_bw()
+
+
+grid2 <- expand.grid(x1 = x1grid,
+                     x2 = 0,
+                     x3 = x1grid)
+
+y_hat_xgb2 <- predict(xgb_Ra, newdata = as.matrix(grid2))
+grid2$Ra <- y_hat_xgb2
+
+cp2_xgb <- ggplot(data = grid2,
+                  mapping = aes(x = x1, y = x3, z = Ra, fill = Ra)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(1,6)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("vc") + ylab("fp") + theme_bw()
+
+
+grid3 <- expand.grid(x1 = 0,
+                     x2 = x1grid,
+                     x3 = x1grid)
+
+y_hat_xgb3 <- predict(xgb_Ra, newdata = as.matrix(grid3))
+grid3$Ra <- y_hat_xgb3
+
+cp3_xgb <- ggplot(data = grid3,
+                  mapping = aes(x = x2, y = x3, z = Ra, fill = Ra)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(1,6)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("f") + ylab("fp") + theme_bw()
+
+ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
+```
+
+### Fc XGB model plots
+
+Main effects plot:
+
+```{r}
+x1_grid_Fc <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.1)
+
+p1_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(x1_grid_Fc, 
+                                                                  rep(0, length(x1_grid_Fc)), 
+                                                                  rep(0, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Fc vs vc') +
+  xlab('vc') +
+  ylab('Fc') + 
+  ylim(24,48) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+p2_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Fc)), 
+                                                                 x1_grid_Fc, 
+                                                                 rep(0, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Fc vs f') +
+  xlab('f') +
+  ylab('Fc') + 
+  ylim(24,48) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+p3_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Fc)), 
+                                                                 rep(0, length(x1_grid_Fc)),
+                                                                 x1_grid_Fc),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                              )))),
+            colour = 'cadetblue4') +
+  ggtitle('Fc vs fp') +
+  xlab('fp') +
+  ylab('Fc') + 
+  ylim(24,48) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(1.5, 7, 15, 23, 28.5)) + 
+  theme_bw()
+
+ggarrange(p1_Fc, p2_Fc, p3_Fc, nrow = 1)
+```
+
+Interaction plots:
+
+```{r, warning = F}
+pp_12a_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, newdata = matrix(c(x1_grid_Fc, 
+                                                                          rep(0, length(x1_grid_Fc)), 
+                                                                          rep(0, length(x1_grid_Fc))),
+                                                                        nrow = length(x1_grid_Fc), ncol = 3
+  ))),
+                colour = '0.125', linetype = '0.125')) +
+  ggtitle('Fc vs vc,f') +
+  xlab('vc') +
+  ylab('Fc') + 
+  ylim(24,48) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_12_Fc <- pp_12a_Fc + 
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, newdata = matrix(c(x1_grid_Fc, 
+                                                                          rep(-1, length(x1_grid_Fc)), 
+                                                                          rep(0, length(x1_grid_Fc))),
+                                                                        nrow = length(x1_grid_Fc), ncol = 3
+  ))),
+                colour = '0.085', linetype = '0.085')) +
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, newdata = matrix(c(x1_grid_Fc, 
+                                                                          rep(1, length(x1_grid_Fc)), 
+                                                                          rep(0, length(x1_grid_Fc))),
+                                                                        nrow = length(x1_grid_Fc), ncol = 3
+  ))),
+                colour = '0.165', linetype = '0.165')) + 
+  scale_color_manual(name = "f", 
+                     values = c("0.085" = "orange2", 
+                                "0.125" = "olivedrab3", 
+                                "0.165" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "f", 
+                        values = c("0.085" = "dashed", 
+                                   "0.125" = "longdash", 
+                                   "0.165" = "solid"))
+# vc vs fp
+
+pp_13a_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, newdata = matrix(c(x1_grid_Fc, 
+                                                                          rep(0, length(x1_grid_Fc)), 
+                                                                          rep(0, length(x1_grid_Fc))),
+                                                                        nrow = length(x1_grid_Fc), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Fc vs vc,fp') +
+  xlab('vc') +
+  ylab('Fc') + 
+  ylim(24,48) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_13_Fc <- pp_13a_Fc + 
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(x1_grid_Fc, 
+                                                                 rep(0, length(x1_grid_Fc)), 
+                                                                 rep(-1, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(x1_grid_Fc, 
+                                                                 rep(0, length(x1_grid_Fc)), 
+                                                                 rep(1, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+# f vs fp
+
+pp_23a_Fc <- ggplot() +        
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, newdata = matrix(c(rep(0, length(x1_grid_Fc)),
+                                                                          x1_grid_Fc, 
+                                                                          rep(0, length(x1_grid_Fc))),
+                                                                        nrow = length(x1_grid_Fc), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Fc vs f,fp') +
+  xlab('f') +
+  ylab('Fc') + 
+  ylim(24,48) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+pp_23_Fc <- pp_23a_Fc + 
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Fc)),
+                                                                 x1_grid_Fc, 
+                                                                 rep(-1, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Fc, y = (predict(xgb_Fc, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Fc)),
+                                                                 x1_grid_Fc, 
+                                                                 rep(1, length(x1_grid_Fc))),
+                                                               nrow = length(x1_grid_Fc), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+
+ggarrange(pp_12_Fc, pp_13_Fc, pp_23_Fc, nrow = 1)
+```
+
+Contour plots:
+
+```{r, warning=FALSE}
+x1grid <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.05)
+
+grid <- expand.grid(x1 = x1grid,
+                    x2 = x1grid,
+                    x3 = 0)
+
+y_hat_xgb <- predict(xgb_Fc, newdata = as.matrix(grid))
+grid$Fc <- y_hat_xgb
+
+cp1_xgb <- ggplot(data = grid,
+                  mapping = aes(x = x1, y = x2, z = Fc, fill = Fc)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(20,50)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  xlab("vc") + ylab("f") + theme_bw()
+
+
+grid2 <- expand.grid(x1 = x1grid,
+                     x2 = 0,
+                     x3 = x1grid)
+
+y_hat_xgb2 <- predict(xgb_Fc, newdata = as.matrix(grid2))
+grid2$Fc <- y_hat_xgb2
+
+cp2_xgb <- ggplot(data = grid2,
+                  mapping = aes(x = x1, y = x3, z = Fc, fill = Fc)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(20,50)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("vc") + ylab("fp") + theme_bw()
+
+
+grid3 <- expand.grid(x1 = 0,
+                     x2 = x1grid,
+                     x3 = x1grid)
+
+y_hat_xgb3 <- predict(xgb_Fc, newdata = as.matrix(grid3))
+grid3$Fc <- y_hat_xgb3
+
+cp3_xgb <- ggplot(data = grid3,
+                  mapping = aes(x = x2, y = x3, z = Fc, fill = Fc)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(20,50)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("f") + ylab("fp") + theme_bw()
+
+ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
+
+```
+
+### Ront XGB model plots
+
+Main effects plots:
+
+```{r}
+x1_grid_Ront <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.1)
+
+p1_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(x1_grid_Ront, 
+                                                                  rep(0, length(x1_grid_Ront)), 
+                                                                  rep(0, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ront vs vc') +
+  xlab('vc') +
+  ylab('Ront') + 
+  ylim(40,200) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+p2_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ront)), 
+                                                                 x1_grid_Ront, 
+                                                                 rep(0, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                                               )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ront vs f') +
+  xlab('f') +
+  ylab('Ront') + 
+  ylim(40,200) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+p3_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ront)), 
+                                                                 rep(0, length(x1_grid_Ront)),
+                                                                 x1_grid_Ront),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                              )))),
+            colour = 'cadetblue4') +
+  ggtitle('Ront vs fp') +
+  xlab('fp') +
+  ylab('Ront') + 
+  ylim(40,200) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(1.5, 7, 15, 23, 28.5)) + 
+  theme_bw()
+
+ggarrange(p1_Ront, p2_Ront, p3_Ront, nrow = 1)
+```
+
+Interaction plots:
+
+```{r}
+pp_12a_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, newdata = matrix(c(x1_grid_Ront, 
+                                                                          rep(0, length(x1_grid_Ront)), 
+                                                                          rep(0, length(x1_grid_Ront))),
+                                                                        nrow = length(x1_grid_Ront), ncol = 3
+  ))),
+                colour = '0.125', linetype = '0.125')) +
+  ggtitle('Ront vs vc,f') +
+  xlab('vc') +
+  ylab('Ront') + 
+  ylim(40,200) + 
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_12_Ront <- pp_12a_Ront + 
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, newdata = matrix(c(x1_grid_Ront, 
+                                                                          rep(-1, length(x1_grid_Ront)), 
+                                                                          rep(0, length(x1_grid_Ront))),
+                                                                        nrow = length(x1_grid_Ront), ncol = 3
+  ))),
+                colour = '0.085', linetype = '0.085')) +
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, newdata = matrix(c(x1_grid_Ront, 
+                                                                          rep(1, length(x1_grid_Ront)), 
+                                                                          rep(0, length(x1_grid_Ront))),
+                                                                        nrow = length(x1_grid_Ront), ncol = 3
+  ))),
+                colour = '0.165', linetype = '0.165')) + 
+  scale_color_manual(name = "f", 
+                     values = c("0.085" = "orange2", 
+                                "0.125" = "olivedrab3", 
+                                "0.165" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "f", 
+                        values = c("0.085" = "dashed", 
+                                   "0.125" = "longdash", 
+                                   "0.165" = "solid"))
+
+pp_13a_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, newdata = matrix(c(x1_grid_Ront, 
+                                                                          rep(0, length(x1_grid_Ront)), 
+                                                                          rep(0, length(x1_grid_Ront))),
+                                                                        nrow = length(x1_grid_Ront), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Ront vs vc,fp') +
+  xlab('vc') +
+  ylab('Ront') + 
+  ylim(40,200) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(107, 165, 250, 335, 393)) + 
+  theme_bw()
+
+pp_13_Ront <- pp_13a_Ront + 
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(x1_grid_Ront, 
+                                                                 rep(0, length(x1_grid_Ront)), 
+                                                                 rep(-1, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(x1_grid_Ront, 
+                                                                 rep(0, length(x1_grid_Ront)), 
+                                                                 rep(1, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+
+pp_23a_Ront <- ggplot() +        
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, newdata = matrix(c(rep(0, length(x1_grid_Ront)),
+                                                                          x1_grid_Ront, 
+                                                                          rep(0, length(x1_grid_Ront))),
+                                                                        nrow = length(x1_grid_Ront), ncol = 3
+  ))),
+                colour = '15', linetype = '15')) +
+  ggtitle('Ront vs f,fp') +
+  xlab('f') +
+  ylab('Ront') + 
+  ylim(40,200) +
+  scale_x_continuous(breaks = c(-1.68, -1, 0, 1, 1.68), label = c(0.058, 0.085, 0.125, 0.165, 0.192)) + 
+  theme_bw()
+
+pp_23_Ront <- pp_23a_Ront + 
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ront)),
+                                                                 x1_grid_Ront, 
+                                                                 rep(-1, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                              ))),
+                colour = '7', linetype = '7')) +
+  geom_line(aes(x = x1_grid_Ront, y = (predict(xgb_Ront, 
+                                              newdata = matrix(c(rep(0, length(x1_grid_Ront)),
+                                                                 x1_grid_Ront, 
+                                                                 rep(1, length(x1_grid_Ront))),
+                                                               nrow = length(x1_grid_Ront), ncol = 3
+                                              ))),
+                colour = '23', linetype = '23')) + 
+  scale_color_manual(name = "fp", 
+                     values = c("7" = "orange2", 
+                                "15" = "olivedrab3", 
+                                "23" = "mediumvioletred")) + 
+  scale_linetype_manual(name = "fp", 
+                        values = c("7" = "dashed", 
+                                   "15" = "longdash", 
+                                   "23" = "solid"))
+
+ggarrange(pp_12_Ront, pp_13_Ront, pp_23_Ront, nrow = 1)
+```
+
+Contour plots:
+
+```{r, warning=FALSE}
+x1grid <- seq(min(plan_respostas$x1), max(plan_respostas$x1), 0.05)
+
+grid <- expand.grid(x1 = x1grid,
+                    x2 = x1grid,
+                    x3 = 0)
+
+y_hat_xgb <- predict(xgb_Ront, newdata = as.matrix(grid))
+grid$Ront <- y_hat_xgb
+
+cp1_xgb <- ggplot(data = grid,
+                  mapping = aes(x = x1, y = x2, z = Ront, fill = Ront)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(40,180)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  xlab("vc") + ylab("f") + theme_bw()
+
+
+grid2 <- expand.grid(x1 = x1grid,
+                     x2 = 0,
+                     x3 = x1grid)
+
+y_hat_xgb2 <- predict(xgb_Ront, newdata = as.matrix(grid2))
+grid2$Ront <- y_hat_xgb2
+
+cp2_xgb <- ggplot(data = grid2,
+                  mapping = aes(x = x1, y = x3, z = Ront, fill = Ront)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(40,180)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(165, 250, 335)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("vc") + ylab("fp") + theme_bw()
+
+
+grid3 <- expand.grid(x1 = 0,
+                     x2 = x1grid,
+                     x3 = x1grid)
+
+y_hat_xgb3 <- predict(xgb_Ront, newdata = as.matrix(grid3))
+grid3$Ront <- y_hat_xgb3
+
+cp3_xgb <- ggplot(data = grid3,
+                  mapping = aes(x = x2, y = x3, z = Ront, fill = Ront)) +
+  geom_tile() +
+  scale_fill_distiller(palette = "Spectral",
+                       direction = -1, limits = c(40,180)) +
+  geom_contour(color = "gray50", bins = 10) + 
+  scale_x_continuous(breaks = c(-1, 0, 1), label = c(0.085, 0.125, 0.165)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1), label = c(7, 15, 23)) + 
+  xlab("f") + ylab("fp") + theme_bw()
+
+ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
+```
+
+## Multi-objective evolutionary optimization
+
+### Solving through caramel
+
+Three-objective optimization function considering caramel package syntax:
+
+```{r}
+xgb_Fc_Ront_caRamel <- function(i){
+
+  f1 <- predict(xgb_Fc, newdata = matrix(c(x1 = x[i,1],
+                                           x2 = x[i,2],
+                                           x3 = x[i,3]), 
+                                         nrow = 1))
+
+  f2 <- predict(xgb_Ront, newdata = matrix(c(x1 = x[i,1],
+                                             x2 = x[i,2],
+                                             x3 = x[i,3]), 
+                                           nrow = 1))
+
+  f3 <- -((x[i,1]*85+250)*(x[i,2]*0.04+0.125)*0.8)
+  
+  if(x[i,1]^2 + x[i,2]^2 + x[i,3]^2 - ro^2 > 0.) {
+    f1 <- NaN
+    f2 <- NaN
+    f3 <- NaN
+  }
+  
+  return(c(f1,f2,f3))
+}
+```
+
+Parameters for caramel algorithm:
+
+```{r}
+ro <- (2^3)^0.25
+
+nvar <- 3
+bounds <- matrix(data = 0., nrow = nvar, ncol = 2)
+bounds[1, 1] <- -ro
+bounds[1, 2] <- ro
+bounds[2, 1] <- -ro
+bounds[2, 2] <- ro
+bounds[3, 1] <- -ro
+bounds[3, 2] <- ro
+
+nobj <- 3
+minmax <- c(F, F, F)
+
+popsize <- 300 
+archsize <- 300
+maxrun <- 30000
+prec <- matrix(1.e-7, nrow = 1, ncol = nobj)
+```
+
+Solving through caramel:
+
+```{r, message=FALSE, output=FALSE}
+set.seed(7)
+start = Sys.time()
+opttri2 <-
+  caRamel(nobj,
+          nvar,
+          minmax,
+          bounds,
+          xgb_Fc_Ront_caRamel,
+          popsize,
+          archsize,
+          maxrun,
+          prec,
+          carallel=FALSE,
+          graph = F)
+```
+
+```{r}
+print( Sys.time() - start )
+```
+
+```{r}
+opttri2_res_caRamel <- data.frame(opttri2$objectives)
+colnames(opttri2_res_caRamel) <- c("Fc", "Ront", "MRR")
+opttri2_res_caRamel$MRR <- -opttri2_res_caRamel$MRR 
+
+par(mfrow = c(1,1))
+scatter3D(opttri2_res_caRamel$Fc, 
+          opttri2_res_caRamel$Ront, 
+          opttri2_res_caRamel$MRR, 
+          col = "mediumseagreen", 
+          pch = 20,
+          bty = "b2",
+          theta = 45, phi = 30,
+          ticktype = "detailed",
+          xlab = "Ra",
+          ylab ="Ront", 
+          zlab = "MRR")
+```
+
+Hypervolume calculation for caramel:
+
+```{r}
+ref <- c(50, 165, -7)
+dominated_hypervolume(as.matrix(t(opttri2$objectives)), ref)
+```
+
+Spacing between solutions:
+
+```{r}
+ed <- as.matrix(dist(opttri2$objectives, diag = F, upper = T), nrow = nrow(opttri2$value))
+ed <- data.frame(ed)
+ed[ed == 0] <- NA
+mindist <- apply(ed, 1, FUN = min, na.rm=TRUE)
+Spacing <- sd(mindist)
+Spacing
+```
+
+### Solving through MOPSOCD
+
+MOPSOCD function: (Author: Pros Naval [pcnaval\@dcs.upd.edu.ph](mailto:pcnaval@dcs.upd.edu.ph){.email}, available at: <https://cran.r-project.org/src/contrib/Archive/mopsocd/>)
+
+```{r}
+mopsocd <- function(fn,gn,varcnt,fncnt,lowerbound,upperbound,opt,popsize,maxgen,archivesize,verbosity,pMut,w,c1,c2) UseMethod("mopsocd")
+mopsocd <- function(fn,gn=NULL,varcnt,fncnt,lowerbound,upperbound,opt,popsize=100,maxgen=100,archivesize=250,verbosity=0,pMut=0.5,w=0.4,c1=1.0,c2=1.0)
+{
+  
+  varcnt <- as.integer(varcnt)
+  fncnt <- as.integer(fncnt)
+  lowerbound <- as.integer(lowerbound)
+  upperbound <- as.integer(upperbound)
+  opt <- as.integer(opt)
+  popsize <- as.integer(popsize)
+  maxgen <- as.integer(maxgen)
+  archivesize <- as.integer(archivesize)
+  verbosity <- as.integer(verbosity)
+  pMut <- as.numeric(pMut)
+  w <- as.numeric(w)
+  c1 <- as.numeric(c1)
+  c2 <- as.numeric(c2)
+  # pareto <- mopsocdbase(fn,gn,varcnt,fncnt,lowerbound,upperbound,opt,popsize,maxgen,archivesize,verbosity,pMut,w,c1,c2)  
+  
+  # pareto$call <- match.call()
+  
+  # class(pareto) <- "pareto"
+  # pareto
+  # }
+  
+  # mopsocdbase <- function(fn,gn,varcnt,fncnt,lowerbound,upperbound,opt,popsize,maxgen,archivesize,verbosity,pMut,w,c1,c2)
+  # {
+  ####################
+  # Global Variables #
+  ####################
+  minvalue <- vector(length=varcnt)
+  maxvalue <- vector(length=varcnt)
+  archiveVar <- matrix(,nrow=archivesize,ncol=varcnt) 
+  archiveFit <- matrix(,nrow=archivesize,ncol=fncnt)
+  popVar <- matrix(,nrow=popsize,ncol=varcnt)
+  popFit <- matrix(,nrow=popsize,ncol=fncnt)
+  pbestsVar <- matrix(,nrow=popsize, ncol=varcnt)
+  pbestsFit <- matrix(,nrow=popsize, ncol=fncnt)
+  velocity <- matrix(,nrow=popsize, ncol=varcnt) 
+  crowdDist <- vector(length=archivesize)
+  minvaluetemp <- matrix(,nrow=popsize,ncol=varcnt)
+  maxvaluetemp <- matrix(,nrow=popsize,ncol=varcnt)
+  ndomCtr <- 0
+  
+  maxvalue <- upperbound
+  minvalue <- lowerbound
+  
+  #########################
+  # Initialize Population #
+  #########################
+  
+  initialize_pop <- function() {
+    
+    for (i in 1:varcnt) {
+      popVar[1:popsize,i] <<- runif(popsize,min=minvalue[i],max=maxvalue[i])
+    }
+    
+  }
+  
+  ##################################
+  # Initialize Particle Velocities #
+  ##################################
+  
+  initialize_vel <- function() { 
+    
+    velocity[1:popsize,1:varcnt] <<- 0.0  
+    
+  }
+  
+  ##########################################################
+  # Evaluate: Compute Value of each Particle in Population #
+  ##########################################################
+  
+  evaluate <- function() {
+    
+    popFit[1:popsize,] <<- t(apply(popVar,1,fn))
+    
+  }
+  
+  ######################################################
+  # Store Values and Fitness Values for Best Particles #
+  ######################################################
+  
+  store_pbests <- function() {  
+    pbestsVar[1:popsize,] <<- popVar[1:popsize,]
+    pbestsFit[1:popsize,] <<- popFit[1:popsize,]
+  }
+  
+  ##########################################
+  # Insert ndominated Particles in Archive #
+  ##########################################
+  
+  insert_nondom <- function() {
+    
+    if(!is.null(gn)) {
+      z <- rowSums(t(matrix(!apply(popVar,1,gn),ncol=popsize)*1)) 
+      minz <- min(z)
+      ix <- which(z == minz)
+      lenix <- length(ix)
+      
+      ixfpop <- NULL
+      for (i in ix) {   
+        if (opt == 1) {    
+          x <- (t(matrix(rep(popFit[i,],lenix),nrow=fncnt))-popFit[ix,] < 0.0)*1
+        } else {
+          x <- (t(matrix(rep(popFit[i,],lenix),nrow=fncnt))-popFit[ix,] > 0.0)*1
+        }         
+        if((max(rowSums(x)) == fncnt) == FALSE){
+          ixfpop <- c(ixfpop,i)
+        }
+      }  
+    } else {
+      ixfpop =seq(popsize)
+    }
+    lenfpop <- length(ixfpop)
+    
+    if(lenfpop != 0){
+      if (ndomCtr + lenfpop <= archivesize) {
+        archiveVar[(ndomCtr+1):(ndomCtr+lenfpop),] <<- popVar[ixfpop,]
+        archiveFit[(ndomCtr+1):(ndomCtr+lenfpop),] <<- popFit[ixfpop,]
+        ndomCtr <<- ndomCtr + lenfpop
+      } else {
+        cat("FATAL ERROR:\nArchive Size Value ",archivesize," too small\n")
+        cat("Recommended Archive Size: 2.5*population size\n")
+        cat("Press Enter to exit\n")
+        scan(quiet=TRUE)
+        cat("Goodbye !\n")
+        stop()    
+      }
+    } else {
+      cat("No solution (Unreasonable constraints)\n")
+      cat("Press Enter to exit\n")
+      scan(quiet=TRUE)
+      cat("Goodbye !\n")
+      stop()
+    }
+    
+  }
+  
+  #############################
+  # Compute Crowding Distance #
+  #############################
+  
+  crowding <- function() {
+    
+    crowdDist[1:ndomCtr] <<- 0.0
+    
+    for (i in seq(fncnt)) {
+      
+      sorted_archive <- sort(archiveFit[1:ndomCtr,i],index.return=TRUE)
+      valsa <- sorted_archive$x
+      ixsa <- sorted_archive$ix  
+      crowdDist[ixsa[2:(ndomCtr-1)]] <<- crowdDist[ixsa[2:(ndomCtr-1)]] + valsa[3:ndomCtr] - valsa[1:(ndomCtr-2)]
+      maxcd <- which.max(crowdDist[1:ndomCtr])
+      crowdDist[ixsa[1]] <<- crowdDist[ixsa[1]] + crowdDist[maxcd]
+      crowdDist[ixsa[ndomCtr]] <<- crowdDist[ixsa[ndomCtr]] + crowdDist[maxcd]   
+      mincd <- which.min(crowdDist[1:ndomCtr])
+      crowdDist[1:ndomCtr] <<- crowdDist[1:ndomCtr]/(crowdDist[maxcd]-crowdDist[mincd])
+    }  
+    
+    sorted_cd <- sort(crowdDist[1:ndomCtr],decreasing=TRUE,index.return=TRUE)
+    archiveVar[1:length(sorted_cd$ix),] <<- archiveVar[sorted_cd$ix,]
+    archiveFit[1:length(sorted_cd$ix),] <<- archiveFit[sorted_cd$ix,]
+    
+  }
+  
+  
+  ######################################
+  # Update Personal Bests of Particles #
+  ######################################
+  
+  update_pbests <- function() {
+    
+    if(opt == 1){
+      x <- rowSums((popFit-pbestsFit >  0.0)*1)
+    } else {
+      x <- rowSums((popFit-pbestsFit <  0.0)*1)
+    }
+    
+    ix1 <- which(x != 0 & x != fncnt)
+    ix2 <- sample(ix1,floor(length(ix1)/2),replace=FALSE)
+    ix <- union(which(x == fncnt),ix2)
+    
+    pbestsVar[ix,] <<- popVar[ix,]  
+    pbestsFit[ix,] <<- popFit[ix,]
+    
+  }
+  
+  ############################
+  # Update Archive Particles #
+  ############################
+  
+  update_archive <- function() {
+    if(!is.null(gn)) {
+      z <- rowSums(t(matrix(!apply(popVar,1,gn),ncol=popsize)*1)) 
+      minz <- min(z)
+      ix <- which(z == minz)
+      lenix <- length(ix)
+      
+      ixfpop <- NULL
+      for (i in ix) {   
+        if (opt == 1) {    
+          x <- (t(matrix(rep(popFit[i,],lenix),nrow=fncnt))-popFit[ix,] < 0.0)*1
+        } else {
+          x <- (t(matrix(rep(popFit[i,],lenix),nrow=fncnt))-popFit[ix,] > 0.0)*1
+        }         
+        if((max(rowSums(x)) == fncnt) == FALSE){
+          ixfpop <- c(ixfpop,i)
+        }
+      } 
+    } else {
+      ixfpop =seq(popsize)
+    }
+    lenfpop <- length(ixfpop)
+    
+    ixinspop <- NULL
+    for (i in ixfpop) { 
+      
+      if (opt == 1) {    
+        x <- (t(matrix(rep(popFit[i,],ndomCtr),nrow=fncnt))-archiveFit[1:ndomCtr,] < 0.0)*1
+      } else {
+        x <- (t(matrix(rep(popFit[i,],ndomCtr),nrow=fncnt))-archiveFit[1:ndomCtr,] > 0.0)*1
+      }         
+      if((max(rowSums(x)) == fncnt) == FALSE) {
+        ixinspop <- c(ixinspop,i)
+      } 
+    }  
+    leninspop <- length(ixinspop)
+    
+    if(leninspop != 0){  
+      if (ndomCtr + leninspop <= archivesize) {
+        archiveVar[(ndomCtr+1):(ndomCtr+leninspop),] <<- popVar[ixinspop,]
+        archiveFit[(ndomCtr+1):(ndomCtr+leninspop),] <<- popFit[ixinspop,]
+        ndomCtr <<- ndomCtr + leninspop
+      } else {
+        crowding()
+        bottom <- floor(ndomCtr*0.9)      
+        cnt <- min((archivesize-bottom),leninspop) 
+        ixinssel <- sample(ixinspop,cnt,replace=F)
+        ixreplace <- sample((archivesize-cnt):archivesize,cnt,replace=F)
+        archiveVar[(archivesize-cnt+1):archivesize,] <<- popVar[ixinssel,]
+        archiveFit[(archivesize-cnt+1):archivesize,] <<- popFit[ixinssel,]
+        ndomCtr <<- archivesize  
+      }      
+    } else {
+      return(0) 
+    }
+    
+    ixarc <- seq(ndomCtr)
+    ixndomarc <- NULL
+    rmove <- NULL
+    dup <- NULL
+    for (i in ixarc) {   
+      if (i %in% dup) {
+        if(verbosity >= 3) cat("Duplicate Particle Found ",i,"\n")
+        next
+      }  
+      if (opt == 1) {    
+        x <- (t(matrix(rep(archiveFit[i,],ndomCtr),nrow=fncnt))-archiveFit[ixarc,] < 0.0)*1
+      } else {
+        x <- (t(matrix(rep(archiveFit[i,],ndomCtr),nrow=fncnt))-archiveFit[ixarc,] > 0.0)*1
+      }   
+      rmove <- c(setdiff(which(rowSums(x) == 0),i),rmove)
+      wich1 <- setdiff(which(rowSums(x)==0),i) 
+      if(length(wich1) != 0) {
+        if(!(i %in% wich1)){
+          for (j in wich1) {
+            if(all(archiveFit[j,] == archiveFit[i,])){
+              dup <- c(j,dup)
+            } 
+          }
+        }
+      }
+      
+    }  
+    
+    rmove <- union(rmove,dup)
+    lenrem <- length(rmove)
+    if(lenrem != 0){
+      cor = setdiff(seq(ndomCtr),rmove)
+      ndomCtr <<- length(cor)  
+      archiveVar[1:ndomCtr,] <<- archiveVar[cor,]
+      archiveFit[1:ndomCtr,] <<- archiveFit[cor,]
+    }
+    
+  }
+  
+  
+  #############################################
+  # Compute Velocity of Particles in Population
+  #############################################
+  
+  compute_velocity <- function(){
+    
+    top <- max(floor((ndomCtr*0.1)),1)
+    gBest <- sample(1:top,1,replace=TRUE)
+    gBestmat <- t(matrix(rep(archiveVar[gBest,],popsize),nrow=varcnt))
+    randum1 <- matrix(runif(popsize*varcnt),popsize,varcnt) 
+    randum2 <- matrix(runif(popsize*varcnt),popsize,varcnt)
+    velocity[1:popsize,] <<- w*velocity[1:popsize,] + c1*randum1*(pbestsVar-popVar) + c2*randum2*(gBestmat-popVar) 
+    popVar[1:popsize,] <<- popVar[1:popsize,] + velocity[1:popsize,]
+    
+  }
+  
+  ##############################################
+  # Maintain Particles within Feasibility Region
+  ##############################################
+  
+  maintain_particles <- function(){
+    
+    for (j in seq(varcnt)) {    
+      wich1 <- which(popVar[,j] < minvalue[j])
+      wich2 <- which(popVar[,j] > maxvalue[j])
+      popVar[wich1,j] <<- minvalue[j]
+      popVar[wich2,j] <<- maxvalue[j]
+      wich12 <- union(wich1,wich2)
+      velocity[wich12,j] <<- -1.0*velocity[wich12,j]
+    }
+    
+  }
+  
+  ######################################
+  # Mutate Function (adapted from MOPSO)
+  ######################################
+  
+  mutate <- function() { 
+    
+    if(t >= maxgen*pMut)
+      return(0)
+    
+    rangev <- vector(length=varcnt)
+    flip <- ifelse(runif(1) < (1-(t/(maxgen*pMut)))^1.5,1,0) 
+    if(flip) {
+      dim <- sample(1:varcnt,1,replace=TRUE)
+      rangev[1:varcnt] <- (maxvalue[1:varcnt] - minvalue[1:varcnt])*0.5*(1-(t/(maxgen*pMut)))^1.5
+      wich1 <- which((popVar[,dim] - rangev[dim]) < minvalue[dim])
+      wich2 <- which((popVar[,dim] + rangev[dim]) > maxvalue[dim])
+      if(length(wich1) != 0) {
+        minvaluetemp[wich1,dim] <<- minvalue[dim]
+        minvaluetemp[-wich1,dim] <<- popVar[-wich1,dim] - rangev[dim]
+      } else {
+        minvaluetemp[,dim] <<- popVar[,dim] - rangev[dim]      
+      }
+      if(length(wich2) != 0) {
+        maxvaluetemp[wich2,dim] <<- maxvalue[dim]
+        maxvaluetemp[-wich2,dim] <<- popVar[-wich2,dim] + rangev[dim]
+      } else {
+        maxvaluetemp[,dim] <<- popVar[,dim] + rangev[dim]
+      } 
+      popVar[,dim] <<- runif(popsize,min=minvaluetemp[,dim],max=maxvaluetemp[,dim]) 
+    } 
+    
+  }
+  
+  ##############
+  # Main Program
+  ##############
+  if(verbosity >= 1) cat("Welcome to MOPSO-CD\n")
+  
+  t1 <- Sys.time()
+  t <- 0 
+  
+  initialize_pop()
+  initialize_vel()
+  evaluate()
+  store_pbests()
+  insert_nondom()
+  
+  while (t < maxgen) {
+    t <- t + 1
+    
+    if(verbosity >= 1)
+      cat("Generation ",t,"\n") 
+    
+    if (ndomCtr>2*fncnt)
+      crowding()
+    
+    compute_velocity()
+    maintain_particles()
+    mutate()
+    evaluate()
+    update_archive()
+    update_pbests()
+    
+    if(verbosity >= 3){
+      cat("\nVariables\n")
+      print(archiveVar[1:ndomCtr,])
+      cat("Objective Function Values:\n")
+      print(archiveFit[1:ndomCtr,])  
+      cat("\n")
+    }
+    
+  }
+  
+  if(verbosity >= 2){
+    cat("###############################\n")
+    cat("         FINAL VALUES\n")
+    cat("###############################\n")
+    cat("Variables:\n")
+    print(archiveVar[1:ndomCtr,])
+    cat("\nObjective Function Values:\n")
+    print(archiveFit[1:ndomCtr,])  
+  }
+  
+  if(verbosity >= 1){
+    cat("\nNondominated Solutions: ",ndomCtr,"\n")
+    cat("Number of Generations: ",t,"\n")
+    cat("Computation Time: ",Sys.time() - t1,"\n")
+  }
+  
+  if(!is.null(gn)) {
+    pareto <- list("paramvalues"=archiveVar[1:ndomCtr,],"objfnvalues"=archiveFit[1:ndomCtr,],"numsols"=ndomCtr,
+                   "fn"=fn,"gn"=gn,"varcnt"=varcnt,"fncnt"=fncnt,"lowerbound"=lowerbound,"upperbound"=upperbound,"opt"=opt,"popsize"=popsize,"maxgen"=maxgen,"archivesize"=archivesize,"pMut"=pMut,"w"=w,"c1"=c1,"c2"=c2)
+  } else {
+    pareto <- list("paramvalues"=archiveVar[1:ndomCtr,],"objfnvalues"=archiveFit[1:ndomCtr,],"numsols"=ndomCtr,
+                   "fn"=fn,"gn"=NULL,"varcnt"=varcnt,"fncnt"=fncnt,"lowerbound"=lowerbound,"upperbound"=upperbound,"opt"=opt,"popsize"=popsize,"maxgen"=maxgen,"archivesize"=archivesize,"pMut"=pMut,"w"=w,"c1"=c1,"c2"=c2)  
+  }
+  
+  warnings()
+  
+  pareto$call <- match.call()
+  class(pareto) <- "pareto"
+  pareto
+  
+}
+
+```
+
+Constraint of experimental design considering MOPSOCD syntax:
+
+```{r}
+ro <- (2^3)^0.25
+
+g <- function(x){
+  g1 <- -x[1]^2 - x[2]^2 -x[3]^2 + ro^2 <= 0
+  return(c(g1))
+}
+```
+
+Three-objective optimization function considering Fc, Ront, and MRR:
+
+```{r}
+xgb_Fc_Ront_MRR <- function(x){
+  
+  # xgb_Ra
+  f1 <- predict(xgb_Fc, newdata = matrix(c(x1 = x[1],
+                                           x2 = x[2],
+                                           x3 = x[3]), nrow = 1))
+  
+  # xgb_Fc
+  f2 <- predict(xgb_Ront, newdata = matrix(c(x1 = x[1],
+                                             x2 = x[2],
+                                             x3 = x[3]), nrow = 1))
+  
+  # MRR, ap = 0.8
+  f3 <- -((x[1]*85+250)*(x[2]*0.04+0.125)*0.8)
+  
+  return(c(f1,f2,f3))
+} 
+```
+
+Solving through MOPSOCD:
+
+```{r}
+start = Sys.time()
+opttri2 <- mopsocd(fn = xgb_Fc_Ront_MRR, 
+                   gn = g,
+                   varcnt = 3,
+                   fncnt = 3,
+                   lowerbound = rep(-ro,3),
+                   upperbound = rep(ro,3), 
+                   opt = 0,
+                   archivesize = 300)
+print(Sys.time() - start)
+
+opttri2_res <- data.frame(opttri2$objfnvalues)
+colnames(opttri2_res) <- c("Fc", "Ront", "MRR")
+opttri2_res$MRR <- -opttri2_res$MRR 
+
+scatter3D(opttri2_res$Fc, 
+          opttri2_res$Ront, 
+          opttri2_res$MRR, 
+          col = "navy", 
+          pch = 20,
+          bty = "b2",
+          theta = 45, phi = 30,
+          ticktype = "detailed",
+          xlab = "Ra",
+          ylab ="Ront", 
+          zlab = "MRR")
+```
+
+Hypervolume calculation for MOPSOCD:
+
+```{r}
+ref <- c(50, 165, -7)
+dominated_hypervolume(as.matrix(t(opttri2$objfnvalues)), ref)
+```
+
+Spacing between solutions:
+
+```{r}
+ed <- as.matrix(dist(opttri2$objfnvalues, diag = F, upper = T), nrow = nrow(opttri2$value))
+ed <- data.frame(ed)
+ed[ed == 0] <- NA
+mindist <- apply(ed, 1, FUN = min, na.rm=TRUE)
+Spacing <- sd(mindist)
+Spacing
+```
+
+### Solving through NSGA-II
+
+Constraint related to CCD design:
+
+```{r}
+ro <- (2^3)^0.25
+
+gg <- function(x){
+  g1 <- -x[1]^2 - x[2]^2 -x[3]^2 + ro^2
+  return(c(g1))
+}
+```
+
+Solving through NSGA-II:
+
+```{r}
+set.seed(13)
+start = Sys.time()
+opttri2 <- nsga2(fn = xgb_Fc_Ront_MRR, 
+                 idim = 3,
+                 odim = 3, 
+                 constraints = gg,
+                 cdim = 1,
+                 lower.bounds = rep(-ro,3),
+                 upper.bounds = rep(ro,3), 
+                 popsize = 300, generations = 100)
+print(Sys.time() - start)
+
+opttri2_res <- data.frame(opttri2$value)
+colnames(opttri2_res) <- c("Fc", "Ront", "MRR")
+opttri2_res$MRR <- -opttri2_res$MRR 
+
+scatter3D(opttri2_res$Fc, 
+          opttri2_res$Ront, 
+          opttri2_res$MRR, 
+          col = "mediumvioletred", 
+          pch = 20,
+          bty = "b2",
+          theta = 45, phi = 30,
+          ticktype = "detailed",
+          xlab = "Fc",
+          ylab ="Ront", 
+          zlab = "MRR")
+```
+
+Hypervolume calculation for NSGA-II:
+
+```{r}
+ref <- c(50, 165, -7)
+dominated_hypervolume(as.matrix(t(opttri2$value)), ref)
+```
+
+Spacing between solutions:
+
+```{r}
+ed <- as.matrix(dist(opttri2$value, diag = F, upper = T), nrow = nrow(opttri2$value))
+ed <- data.frame(ed)
+ed[ed == 0] <- NA
+mindist <- apply(ed, 1, FUN = min, na.rm=TRUE)
+Spacing <- sd(mindist)
+Spacing
+```
+
+### Convergence of hypervolume considering NSGA-II (best results)
+
+```{r}
+hv <- numeric(10)
+g <- 1
+
+for(i in seq(10,100,by=10)){
+#print(g)
+set.seed(7)
+opt_nsga2 <- mco::nsga2(fn = xgb_Fc_Ront_MRR, 
+                       idim = 3,
+                       odim = 3, 
+                       constraints = gg,
+                       cdim = 1,
+                       lower.bounds = rep(-ro,3),
+                       upper.bounds = rep(ro,3), 
+                       popsize = 300, generations = i)
+sol_nsga2 <- opt_nsga2$value
+colnames(sol_nsga2) <- c("y1", "y2", "y3")
+sol_nsga2 <- data.frame(sol_nsga2)
+
+hv[g] <- dominatedHypervolume(as.matrix(sol_nsga2), ref)
+   
+g <- g + 1
+   
+}
+ 
+hv <- data.frame(generations = seq(10,100,by=10),
+                 hv = hv)
+
+ggplot(hv, aes(x = generations, y = hv)) + 
+ geom_line(col = "navy") +
+ geom_point(col = "navy") + 
+ scale_x_continuous(breaks = seq(0,100, by =20)) + theme_bw()
+
+```
+
+### Decision making through pseudo-weights
+
+```{r}
+niveis_otimos2 <- opttri2$par
+colnames(niveis_otimos2) <- c("x1","x2","x3")
+niveis_otimos2 <- data.frame(niveis_otimos2)
+niveis_otimos2$vc <- niveis_otimos2$x1*85 + 250
+niveis_otimos2$f <- niveis_otimos2$x2*0.04 + 0.125
+niveis_otimos2$fp <- niveis_otimos2$x3*8 + 15
+
+opttri2_res_norm <- opttri2_res
+opttri2_res_norm$Fc <- (opttri2_res_norm$Fc - min(opttri2_res_norm$Fc))/
+  (max(opttri2_res_norm$Fc) - min(opttri2_res_norm$Fc))
+opttri2_res_norm$Ront <- (opttri2_res_norm$Ront - min(opttri2_res_norm$Ront))/
+  (max(opttri2_res_norm$Ront) - min(opttri2_res_norm$Ront))
+opttri2_res_norm$MRR <- (-opttri2_res_norm$MRR - min(-opttri2_res_norm$MRR))/
+  (max(-opttri2_res_norm$MRR) - min(-opttri2_res_norm$MRR))
+
+w1 <- ((max(opttri2_res_norm$Fc) - opttri2_res_norm$Fc)/
+         (max(opttri2_res_norm$Fc)-min(opttri2_res_norm$Fc)))/
+  (((max(opttri2_res_norm$Fc) - opttri2_res_norm$Fc)/
+      (max(opttri2_res_norm$Fc)-min(opttri2_res_norm$Fc))) +
+     ((max(opttri2_res_norm$Ront) - opttri2_res_norm$Ront)/
+        (max(opttri2_res_norm$Ront)-min(opttri2_res_norm$Ront))) +
+     ((max(opttri2_res_norm$MRR) - opttri2_res_norm$MRR)/
+        (max(opttri2_res_norm$MRR)-min(opttri2_res_norm$MRR))))
+w2 <- ((max(opttri2_res_norm$Ront) - opttri2_res_norm$Ront)/
+         (max(opttri2_res_norm$Ront)-min(opttri2_res_norm$Ront)))/
+  (((max(opttri2_res_norm$Fc) - opttri2_res_norm$Fc)/
+      (max(opttri2_res_norm$Fc)-min(opttri2_res_norm$Fc))) +
+     ((max(opttri2_res_norm$Ront) - opttri2_res_norm$Ront)/
+        (max(opttri2_res_norm$Ront)-min(opttri2_res_norm$Ront))) +
+     ((max(opttri2_res_norm$MRR) - opttri2_res_norm$MRR)/
+        (max(opttri2_res_norm$MRR)-min(opttri2_res_norm$MRR))))
+w3 <- ((max(opttri2_res_norm$MRR) - opttri2_res_norm$MRR)/
+         (max(opttri2_res_norm$MRR)-min(opttri2_res_norm$MRR)))/
+  (((max(opttri2_res_norm$Fc) - opttri2_res_norm$Fc)/
+      (max(opttri2_res_norm$Fc)-min(opttri2_res_norm$Fc))) +
+     ((max(opttri2_res_norm$Ront) - opttri2_res_norm$Ront)/
+        (max(opttri2_res_norm$Ront)-min(opttri2_res_norm$Ront))) +
+     ((max(opttri2_res_norm$MRR) - opttri2_res_norm$MRR)/
+        (max(opttri2_res_norm$MRR)-min(opttri2_res_norm$MRR))))
+
+w <- data.frame(w1,w2,w3)
+
+w <- round(w,2)
+#rowSums(w)
+
+desired_w <- data.frame(w1 = c(1,0,0,2/3,2/3,1/3,1/3,  0,  0,1/3),
+                        w2 = c(0,1,0,1/3,  0,2/3,  0,2/3,1/3,1/3),
+                        w3 = c(0,0,1,  0,1/3,  0,2/3,1/3,2/3,1/3))
+# rowSums(desired_w)
+
+dists <- numeric(nrow(w))
+selected_w <- numeric(nrow(desired_w)) 
+
+for (j in 1:nrow(desired_w)){
+  
+  dists[1] <- dist(rbind(w[1,], desired_w[j,]))
+  
+  for(i in 2:nrow(w)){
+    dists[i] <- dist(rbind(w[i,], desired_w[j,]))
+  }
+  
+  selected_w[j] <- which.min(dists)
+}
+
+#selected_w
+#w[selected_w,]
+
+Solucoes_pseudo_w <- cbind(desired_w, 
+                           niveis_otimos2[selected_w,],
+                           opttri2_res[selected_w,])
+
+Solucoes_pseudo_w <- round(Solucoes_pseudo_w,3)
+Solucoes_pseudo_w
+
+# library(xtable)
+# xtable(Solucoes_pseudo_w)
+
+scatter3D(opttri2_res$Fc, 
+          opttri2_res$Ront, 
+          opttri2_res$MRR, 
+          col = "mediumvioletred", 
+          pch = 20,
+          bty = "b2",
+          theta = 45, phi = 30,
+          ticktype = "detailed",
+          xlab = "Fc",
+          ylab ="Ront", 
+          zlab = "MRR")
+
+scatter3D(opttri2_res[selected_w,]$Fc, 
+          opttri2_res[selected_w,]$Ront, 
+          opttri2_res[selected_w,]$MRR, 
+          colvar = NULL,
+          col = "black", ticktype = "detailed",
+          pch = 0, cex = 1, bty = "b2",
+          phi = 30, theta =140,
+          add = T)
+```
