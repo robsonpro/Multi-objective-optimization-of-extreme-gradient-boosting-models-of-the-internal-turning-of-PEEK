@@ -7,6 +7,7 @@ format:
     fig-height: 4
 editor: visual
 ---
+---
 
 ## Loading libraries
 
@@ -299,8 +300,7 @@ res2
 RSM model reduction through backward elimination for Ront:
 
 ```{r}
-compRont <- lm(Fc ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2),
-            data = plan_respostas)
+compRont <- lm(Ront ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + I(x1^2) + I(x2^2) + I(x3^2), data = plan_respostas)
 summary(compRont)
 
 red_compRont <- step(compRont)
@@ -653,9 +653,9 @@ res2 <- wilcox.test(MAE ~ model, res.teste_Ront)
 res2
 ```
 
-## Random forest and GAM tuning
+## Random forest and BAG tuning
 
-RF and GAM tuning for Ra:
+RF and BAG tuning for Ra:
 
 ```{r}
 nr <- 1:nrow(plan_respostas)
@@ -735,7 +735,7 @@ res2
 
 ```
 
-RF and GAM tuning for Fc:
+RF and BAG tuning for Fc:
 
 ```{r}
 nr <- 1:nrow(plan_respostas)
@@ -815,7 +815,7 @@ res2
 
 ```
 
-RF and GAM tuning for Fc:
+RF and BAG tuning for Fc:
 
 ```{r}
 nr <- 1:nrow(plan_respostas)
