@@ -7,7 +7,8 @@ format:
     fig-height: 4
 editor: visual
 ---
----
+
+------------------------------------------------------------------------
 
 ## Loading libraries
 
@@ -1950,6 +1951,19 @@ cp3_xgb <- ggplot(data = grid3,
 ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
 ```
 
+Feature importance plot:
+
+```{r}
+importance_matrix_Ra <- xgb.importance(colnames(plan_respostas[,3:5]), model = xgb_Ra)
+
+ggplot(importance_matrix_Ra, aes(x= reorder(Feature, Gain), y = Gain)) +
+  geom_bar(stat = "identity", color = "pink4", fill = "pink") + 
+  labs(y = "Importance", x = "Feature") + 
+  scale_x_discrete(labels=c("fp", "vc", "f")) +
+  coord_flip() + 
+  theme_bw()
+```
+
 ### Fc XGB model plots
 
 Main effects plot:
@@ -2187,6 +2201,19 @@ ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
 
 ```
 
+Feature importance plot:
+
+```{r}
+importance_matrix_Fc <- xgb.importance(colnames(plan_respostas[,3:5]), model = xgb_Fc)
+
+ggplot(importance_matrix_Fc, aes(x= reorder(Feature, Gain), y = Gain)) +
+  geom_bar(stat = "identity", color = "pink4", fill = "pink") + 
+  labs(y = "Importance", x = "Feature") + 
+  scale_x_discrete(labels=c("vc", "fp", "f")) +
+  coord_flip() + 
+  theme_bw()
+```
+
 ### Ront XGB model plots
 
 Main effects plots:
@@ -2420,6 +2447,20 @@ cp3_xgb <- ggplot(data = grid3,
 
 ggarrange(cp1_xgb, cp2_xgb, cp3_xgb, nrow = 1)
 ```
+
+Feature importance plot:
+
+```{r}
+importance_matrix_Ront <- xgb.importance(colnames(plan_respostas[,3:5]), model = xgb_Ront)
+
+ggplot(importance_matrix_Ront, aes(x= reorder(Feature, Gain), y = Gain)) +
+  geom_bar(stat = "identity", color = "pink4", fill = "pink") + 
+  labs(y = "Importance", x = "Feature") + 
+  scale_x_discrete(labels=c("fp", "f", "vc")) +
+  coord_flip() + 
+  theme_bw()
+```
+
 
 ## Multi-objective evolutionary optimization
 
