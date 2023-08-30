@@ -3631,9 +3631,9 @@ P value adjustment method: BH </code></pre>
 <span id="cb226-12"><a href="#cb226-12" aria-hidden="true" tabindex="-1"></a>nobj <span class="ot">&lt;-</span> <span class="dv">3</span></span>
 <span id="cb226-13"><a href="#cb226-13" aria-hidden="true" tabindex="-1"></a>minmax <span class="ot">&lt;-</span> <span class="fu">c</span>(F, F, F)</span>
 <span id="cb226-14"><a href="#cb226-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb226-15"><a href="#cb226-15" aria-hidden="true" tabindex="-1"></a>popsize <span class="ot">&lt;-</span> <span class="dv">300</span> </span>
-<span id="cb226-16"><a href="#cb226-16" aria-hidden="true" tabindex="-1"></a>archsize <span class="ot">&lt;-</span> <span class="dv">300</span></span>
-<span id="cb226-17"><a href="#cb226-17" aria-hidden="true" tabindex="-1"></a>maxrun <span class="ot">&lt;-</span> <span class="dv">30000</span></span>
+<span id="cb226-15"><a href="#cb226-15" aria-hidden="true" tabindex="-1"></a>popsize <span class="ot">&lt;-</span> <span class="dv">160</span> </span>
+<span id="cb226-16"><a href="#cb226-16" aria-hidden="true" tabindex="-1"></a>archsize <span class="ot">&lt;-</span> <span class="dv">160</span></span>
+<span id="cb226-17"><a href="#cb226-17" aria-hidden="true" tabindex="-1"></a>maxrun <span class="ot">&lt;-</span> <span class="dv">200</span></span>
 <span id="cb226-18"><a href="#cb226-18" aria-hidden="true" tabindex="-1"></a>prec <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="dv">1</span>.e<span class="dv">-7</span>, <span class="at">nrow =</span> <span class="dv">1</span>, <span class="at">ncol =</span> nobj)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
 <p>Solving through caramel:</p>
@@ -3656,7 +3656,7 @@ P value adjustment method: BH </code></pre>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb228"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb228-1"><a href="#cb228-1" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>( <span class="fu">Sys.time</span>() <span class="sc">-</span> start )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>Time difference of 5.573799 mins</code></pre>
+<pre><code>Time difference of 0.7786121 secs</code></pre>
 </div>
 </div>
 <div class="cell">
@@ -3685,7 +3685,7 @@ P value adjustment method: BH </code></pre>
 <div class="sourceCode cell-code" id="cb231"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb231-1"><a href="#cb231-1" aria-hidden="true" tabindex="-1"></a>ref <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">50</span>, <span class="dv">165</span>, <span class="sc">-</span><span class="dv">7</span>)</span>
 <span id="cb231-2"><a href="#cb231-2" aria-hidden="true" tabindex="-1"></a><span class="fu">dominated_hypervolume</span>(<span class="fu">as.matrix</span>(<span class="fu">t</span>(opttri2<span class="sc">$</span>objectives)), ref)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 67538.72</code></pre>
+<pre><code>[1] 55144.89</code></pre>
 </div>
 </div>
 <p>Spacing between solutions:</p>
@@ -3697,7 +3697,7 @@ P value adjustment method: BH </code></pre>
 <span id="cb233-5"><a href="#cb233-5" aria-hidden="true" tabindex="-1"></a>Spacing <span class="ot">&lt;-</span> <span class="fu">sd</span>(mindist)</span>
 <span id="cb233-6"><a href="#cb233-6" aria-hidden="true" tabindex="-1"></a>Spacing</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 1.436398</code></pre>
+<pre><code>[1] 1.987588</code></pre>
 </div>
 </div>
 </section>
@@ -3746,10 +3746,10 @@ P value adjustment method: BH </code></pre>
 <span id="cb238-6"><a href="#cb238-6" aria-hidden="true" tabindex="-1"></a>                   <span class="at">lowerbound =</span> <span class="fu">rep</span>(<span class="sc">-</span>ro,<span class="dv">3</span>),</span>
 <span id="cb238-7"><a href="#cb238-7" aria-hidden="true" tabindex="-1"></a>                   <span class="at">upperbound =</span> <span class="fu">rep</span>(ro,<span class="dv">3</span>), </span>
 <span id="cb238-8"><a href="#cb238-8" aria-hidden="true" tabindex="-1"></a>                   <span class="at">opt =</span> <span class="dv">0</span>,</span>
-<span id="cb238-9"><a href="#cb238-9" aria-hidden="true" tabindex="-1"></a>                   <span class="at">archivesize =</span> <span class="dv">300</span>)</span>
+<span id="cb238-9"><a href="#cb238-9" aria-hidden="true" tabindex="-1"></a>                   <span class="at">archivesize =</span> <span class="dv">160</span>, <span class="at">maxgen =</span> <span class="dv">200</span>)</span>
 <span id="cb238-10"><a href="#cb238-10" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">Sys.time</span>() <span class="sc">-</span> start)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>Time difference of 29.27723 secs</code></pre>
+<pre><code>Time difference of 57.13348 secs</code></pre>
 </div>
 <div class="sourceCode cell-code" id="cb240"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb240-1"><a href="#cb240-1" aria-hidden="true" tabindex="-1"></a>opttri2_res <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(opttri2<span class="sc">$</span>objfnvalues)</span>
 <span id="cb240-2"><a href="#cb240-2" aria-hidden="true" tabindex="-1"></a><span class="fu">colnames</span>(opttri2_res) <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"Fc"</span>, <span class="st">"Ront"</span>, <span class="st">"MRR"</span>)</span>
@@ -3775,7 +3775,7 @@ P value adjustment method: BH </code></pre>
 <div class="sourceCode cell-code" id="cb241"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb241-1"><a href="#cb241-1" aria-hidden="true" tabindex="-1"></a>ref <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">50</span>, <span class="dv">165</span>, <span class="sc">-</span><span class="dv">7</span>)</span>
 <span id="cb241-2"><a href="#cb241-2" aria-hidden="true" tabindex="-1"></a><span class="fu">dominated_hypervolume</span>(<span class="fu">as.matrix</span>(<span class="fu">t</span>(opttri2<span class="sc">$</span>objfnvalues)), ref)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 60343.94</code></pre>
+<pre><code>[1] 60655.54</code></pre>
 </div>
 </div>
 <p>Spacing between solutions:</p>
@@ -3787,7 +3787,7 @@ P value adjustment method: BH </code></pre>
 <span id="cb243-5"><a href="#cb243-5" aria-hidden="true" tabindex="-1"></a>Spacing <span class="ot">&lt;-</span> <span class="fu">sd</span>(mindist)</span>
 <span id="cb243-6"><a href="#cb243-6" aria-hidden="true" tabindex="-1"></a>Spacing</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 1.046342</code></pre>
+<pre><code>[1] 0.803678</code></pre>
 </div>
 </div>
 </section>
@@ -3813,10 +3813,10 @@ P value adjustment method: BH </code></pre>
 <span id="cb246-7"><a href="#cb246-7" aria-hidden="true" tabindex="-1"></a>                 <span class="at">cdim =</span> <span class="dv">1</span>,</span>
 <span id="cb246-8"><a href="#cb246-8" aria-hidden="true" tabindex="-1"></a>                 <span class="at">lower.bounds =</span> <span class="fu">rep</span>(<span class="sc">-</span>ro,<span class="dv">3</span>),</span>
 <span id="cb246-9"><a href="#cb246-9" aria-hidden="true" tabindex="-1"></a>                 <span class="at">upper.bounds =</span> <span class="fu">rep</span>(ro,<span class="dv">3</span>), </span>
-<span id="cb246-10"><a href="#cb246-10" aria-hidden="true" tabindex="-1"></a>                 <span class="at">popsize =</span> <span class="dv">300</span>, <span class="at">generations =</span> <span class="dv">100</span>)</span>
+<span id="cb246-10"><a href="#cb246-10" aria-hidden="true" tabindex="-1"></a>                 <span class="at">popsize =</span> <span class="dv">160</span>, <span class="at">generations =</span> <span class="dv">200</span>)</span>
 <span id="cb246-11"><a href="#cb246-11" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">Sys.time</span>() <span class="sc">-</span> start)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>Time difference of 1.461636 mins</code></pre>
+<pre><code>Time difference of 1.468672 mins</code></pre>
 </div>
 <div class="sourceCode cell-code" id="cb248"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb248-1"><a href="#cb248-1" aria-hidden="true" tabindex="-1"></a>opttri2_res <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(opttri2<span class="sc">$</span>value)</span>
 <span id="cb248-2"><a href="#cb248-2" aria-hidden="true" tabindex="-1"></a><span class="fu">colnames</span>(opttri2_res) <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"Fc"</span>, <span class="st">"Ront"</span>, <span class="st">"MRR"</span>)</span>
@@ -3842,7 +3842,7 @@ P value adjustment method: BH </code></pre>
 <div class="sourceCode cell-code" id="cb249"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb249-1"><a href="#cb249-1" aria-hidden="true" tabindex="-1"></a>ref <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">50</span>, <span class="dv">165</span>, <span class="sc">-</span><span class="dv">7</span>)</span>
 <span id="cb249-2"><a href="#cb249-2" aria-hidden="true" tabindex="-1"></a><span class="fu">dominated_hypervolume</span>(<span class="fu">as.matrix</span>(<span class="fu">t</span>(opttri2<span class="sc">$</span>value)), ref)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 67945.77</code></pre>
+<pre><code>[1] 67722.5</code></pre>
 </div>
 </div>
 <p>Spacing between solutions:</p>
@@ -3854,7 +3854,7 @@ P value adjustment method: BH </code></pre>
 <span id="cb251-5"><a href="#cb251-5" aria-hidden="true" tabindex="-1"></a>Spacing <span class="ot">&lt;-</span> <span class="fu">sd</span>(mindist)</span>
 <span id="cb251-6"><a href="#cb251-6" aria-hidden="true" tabindex="-1"></a>Spacing</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>[1] 1.813947</code></pre>
+<pre><code>[1] 1.209561</code></pre>
 </div>
 </div>
 </section>
@@ -3864,7 +3864,7 @@ P value adjustment method: BH </code></pre>
 <div class="sourceCode cell-code" id="cb253"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb253-1"><a href="#cb253-1" aria-hidden="true" tabindex="-1"></a>hv <span class="ot">&lt;-</span> <span class="fu">numeric</span>(<span class="dv">10</span>)</span>
 <span id="cb253-2"><a href="#cb253-2" aria-hidden="true" tabindex="-1"></a>g <span class="ot">&lt;-</span> <span class="dv">1</span></span>
 <span id="cb253-3"><a href="#cb253-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb253-4"><a href="#cb253-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span>(i <span class="cf">in</span> <span class="fu">seq</span>(<span class="dv">10</span>,<span class="dv">100</span>,<span class="at">by=</span><span class="dv">10</span>)){</span>
+<span id="cb253-4"><a href="#cb253-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span>(i <span class="cf">in</span> <span class="fu">seq</span>(<span class="dv">10</span>,<span class="dv">200</span>,<span class="at">by=</span><span class="dv">10</span>)){</span>
 <span id="cb253-5"><a href="#cb253-5" aria-hidden="true" tabindex="-1"></a><span class="co">#print(g)</span></span>
 <span id="cb253-6"><a href="#cb253-6" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">7</span>)</span>
 <span id="cb253-7"><a href="#cb253-7" aria-hidden="true" tabindex="-1"></a>opt_nsga2 <span class="ot">&lt;-</span> mco<span class="sc">::</span><span class="fu">nsga2</span>(<span class="at">fn =</span> xgb_Fc_Ront_MRR, </span>
@@ -3874,7 +3874,7 @@ P value adjustment method: BH </code></pre>
 <span id="cb253-11"><a href="#cb253-11" aria-hidden="true" tabindex="-1"></a>                       <span class="at">cdim =</span> <span class="dv">1</span>,</span>
 <span id="cb253-12"><a href="#cb253-12" aria-hidden="true" tabindex="-1"></a>                       <span class="at">lower.bounds =</span> <span class="fu">rep</span>(<span class="sc">-</span>ro,<span class="dv">3</span>),</span>
 <span id="cb253-13"><a href="#cb253-13" aria-hidden="true" tabindex="-1"></a>                       <span class="at">upper.bounds =</span> <span class="fu">rep</span>(ro,<span class="dv">3</span>), </span>
-<span id="cb253-14"><a href="#cb253-14" aria-hidden="true" tabindex="-1"></a>                       <span class="at">popsize =</span> <span class="dv">300</span>, <span class="at">generations =</span> i)</span>
+<span id="cb253-14"><a href="#cb253-14" aria-hidden="true" tabindex="-1"></a>                       <span class="at">popsize =</span> <span class="dv">160</span>, <span class="at">generations =</span> i)</span>
 <span id="cb253-15"><a href="#cb253-15" aria-hidden="true" tabindex="-1"></a>sol_nsga2 <span class="ot">&lt;-</span> opt_nsga2<span class="sc">$</span>value</span>
 <span id="cb253-16"><a href="#cb253-16" aria-hidden="true" tabindex="-1"></a><span class="fu">colnames</span>(sol_nsga2) <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"y1"</span>, <span class="st">"y2"</span>, <span class="st">"y3"</span>)</span>
 <span id="cb253-17"><a href="#cb253-17" aria-hidden="true" tabindex="-1"></a>sol_nsga2 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(sol_nsga2)</span>
@@ -3885,13 +3885,13 @@ P value adjustment method: BH </code></pre>
 <span id="cb253-22"><a href="#cb253-22" aria-hidden="true" tabindex="-1"></a>   </span>
 <span id="cb253-23"><a href="#cb253-23" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb253-24"><a href="#cb253-24" aria-hidden="true" tabindex="-1"></a> </span>
-<span id="cb253-25"><a href="#cb253-25" aria-hidden="true" tabindex="-1"></a>hv <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">generations =</span> <span class="fu">seq</span>(<span class="dv">10</span>,<span class="dv">100</span>,<span class="at">by=</span><span class="dv">10</span>),</span>
+<span id="cb253-25"><a href="#cb253-25" aria-hidden="true" tabindex="-1"></a>hv <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">generations =</span> <span class="fu">seq</span>(<span class="dv">10</span>,<span class="dv">200</span>,<span class="at">by=</span><span class="dv">10</span>),</span>
 <span id="cb253-26"><a href="#cb253-26" aria-hidden="true" tabindex="-1"></a>                 <span class="at">hv =</span> hv)</span>
 <span id="cb253-27"><a href="#cb253-27" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb253-28"><a href="#cb253-28" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(hv, <span class="fu">aes</span>(<span class="at">x =</span> generations, <span class="at">y =</span> hv)) <span class="sc">+</span> </span>
 <span id="cb253-29"><a href="#cb253-29" aria-hidden="true" tabindex="-1"></a> <span class="fu">geom_line</span>(<span class="at">col =</span> <span class="st">"navy"</span>) <span class="sc">+</span></span>
 <span id="cb253-30"><a href="#cb253-30" aria-hidden="true" tabindex="-1"></a> <span class="fu">geom_point</span>(<span class="at">col =</span> <span class="st">"navy"</span>) <span class="sc">+</span> </span>
-<span id="cb253-31"><a href="#cb253-31" aria-hidden="true" tabindex="-1"></a> <span class="fu">scale_x_continuous</span>(<span class="at">breaks =</span> <span class="fu">seq</span>(<span class="dv">0</span>,<span class="dv">100</span>, <span class="at">by =</span><span class="dv">20</span>)) <span class="sc">+</span> <span class="fu">theme_bw</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb253-31"><a href="#cb253-31" aria-hidden="true" tabindex="-1"></a> <span class="fu">scale_x_continuous</span>(<span class="at">breaks =</span> <span class="fu">seq</span>(<span class="dv">0</span>,<span class="dv">200</span>, <span class="at">by =</span><span class="dv">20</span>)) <span class="sc">+</span> <span class="fu">theme_bw</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <p><img src="MOEA_XGB_Internal_turning_PEEK_files/figure-html/unnamed-chunk-85-1.png" class="img-fluid" width="768"></p>
 </div>
@@ -3975,27 +3975,27 @@ P value adjustment method: BH </code></pre>
 <span id="cb254-73"><a href="#cb254-73" aria-hidden="true" tabindex="-1"></a>Solucoes_pseudo_w</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>       w1    w2    w3     x1     x2     x3      vc     f     fp     Fc    Ront
-3   1.000 0.000 0.000 -1.349 -0.667 -0.551 135.350 0.098 10.591 22.810 141.864
-1   0.000 1.000 0.000  0.778 -0.445  0.843 316.107 0.107 21.741 34.143  70.911
-4   0.000 0.000 1.000  0.777  1.458  0.304 316.068 0.183 17.431 41.828  99.123
-5   0.667 0.333 0.000 -0.389 -0.667  0.995 216.939 0.098 22.956 26.750 128.280
-77  0.667 0.000 0.333  0.166 -0.667 -0.590 264.084 0.098 10.278 25.864 143.924
-6   0.333 0.667 0.000  0.824 -1.342  0.577 319.998 0.071 19.614 31.838  76.438
-4.1 0.333 0.000 0.667  0.777  1.458  0.304 316.068 0.183 17.431 41.828  99.123
-16  0.000 0.667 0.333  1.599  0.219  0.456 385.877 0.134 18.648 42.444  72.388
-4.2 0.000 0.333 0.667  0.777  1.458  0.304 316.068 0.183 17.431 41.828  99.123
-25  0.333 0.333 0.333  1.527 -0.667 -0.218 379.784 0.098 13.254 29.827  91.293
+2   1.000 0.000 0.000 -1.346 -0.667 -0.510 135.555 0.098 10.917 22.810 141.864
+35  0.000 1.000 0.000  0.777 -0.445  0.891 316.074 0.107 22.132 34.143  70.911
+3   0.000 0.000 1.000  1.144  1.231 -0.067 347.248 0.174 14.462 43.885  91.329
+5   0.667 0.333 0.000 -0.389 -0.667  1.206 216.944 0.098 24.651 26.750 128.280
+10  0.667 0.000 0.333  0.166 -0.667 -0.436 264.122 0.098 11.512 26.308 143.924
+39  0.333 0.667 0.000  0.775 -0.500  1.277 315.889 0.105 25.220 33.713  70.911
+4   0.333 0.000 0.667  1.149  1.206  0.223 347.687 0.173 16.785 42.842  91.329
+15  0.000 0.667 0.333  1.604  0.208  0.460 386.314 0.133 18.683 42.444  72.388
+3.1 0.000 0.333 0.667  1.144  1.231 -0.067 347.248 0.174 14.462 43.885  91.329
+34  0.333 0.333 0.333  1.515 -0.667 -0.249 378.786 0.098 13.005 29.827  91.293
        MRR
-3   10.647
-1   27.112
-4   46.352
-5   17.062
-77  20.774
-6   18.259
-4.1 46.352
-16  41.296
-4.2 46.352
-25  29.875</code></pre>
+2   10.663
+35  27.110
+3   48.401
+5   17.066
+10  20.778
+39  26.533
+4   48.188
+15  41.207
+3.1 48.401
+34  29.798</code></pre>
 </div>
 <div class="sourceCode cell-code" id="cb256"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb256-1"><a href="#cb256-1" aria-hidden="true" tabindex="-1"></a><span class="co"># library(xtable)</span></span>
 <span id="cb256-2"><a href="#cb256-2" aria-hidden="true" tabindex="-1"></a><span class="co"># xtable(Solucoes_pseudo_w)</span></span>

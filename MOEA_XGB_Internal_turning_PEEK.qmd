@@ -2510,9 +2510,9 @@ bounds[3, 2] <- ro
 nobj <- 3
 minmax <- c(F, F, F)
 
-popsize <- 300 
-archsize <- 300
-maxrun <- 30000
+popsize <- 160 
+archsize <- 160
+maxrun <- 200
 prec <- matrix(1.e-7, nrow = 1, ncol = nobj)
 ```
 
@@ -2629,7 +2629,7 @@ opttri2 <- mopsocd(fn = xgb_Fc_Ront_MRR,
                    lowerbound = rep(-ro,3),
                    upperbound = rep(ro,3), 
                    opt = 0,
-                   archivesize = 300)
+                   archivesize = 160, maxgen = 200)
 print(Sys.time() - start)
 
 opttri2_res <- data.frame(opttri2$objfnvalues)
@@ -2692,7 +2692,7 @@ opttri2 <- nsga2(fn = xgb_Fc_Ront_MRR,
                  cdim = 1,
                  lower.bounds = rep(-ro,3),
                  upper.bounds = rep(ro,3), 
-                 popsize = 300, generations = 100)
+                 popsize = 160, generations = 200)
 print(Sys.time() - start)
 
 opttri2_res <- data.frame(opttri2$value)
@@ -2736,7 +2736,7 @@ Spacing
 hv <- numeric(10)
 g <- 1
 
-for(i in seq(10,100,by=10)){
+for(i in seq(10,200,by=10)){
 #print(g)
 set.seed(7)
 opt_nsga2 <- mco::nsga2(fn = xgb_Fc_Ront_MRR, 
@@ -2746,7 +2746,7 @@ opt_nsga2 <- mco::nsga2(fn = xgb_Fc_Ront_MRR,
                        cdim = 1,
                        lower.bounds = rep(-ro,3),
                        upper.bounds = rep(ro,3), 
-                       popsize = 300, generations = i)
+                       popsize = 160, generations = i)
 sol_nsga2 <- opt_nsga2$value
 colnames(sol_nsga2) <- c("y1", "y2", "y3")
 sol_nsga2 <- data.frame(sol_nsga2)
@@ -2757,13 +2757,13 @@ g <- g + 1
    
 }
  
-hv <- data.frame(generations = seq(10,100,by=10),
+hv <- data.frame(generations = seq(10,200,by=10),
                  hv = hv)
 
 ggplot(hv, aes(x = generations, y = hv)) + 
  geom_line(col = "navy") +
  geom_point(col = "navy") + 
- scale_x_continuous(breaks = seq(0,100, by =20)) + theme_bw()
+ scale_x_continuous(breaks = seq(0,200, by =20)) + theme_bw()
 
 ```
 
