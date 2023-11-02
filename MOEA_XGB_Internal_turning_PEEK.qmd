@@ -898,7 +898,7 @@ res2
 
 ## SVR hyperparameters' selection
 
-Cross-validation to define `kernel` for Ra:
+Cross-validation to define `kernel`, `gamma` and `cost` for Ra:
 
 ```{r}
 set.seed(1)
@@ -910,18 +910,7 @@ tune.out <- tune(svm, Ra ~ x1+x2+x3, data = plan_respostas,
 tune.out$best.parameters
 ```
 
-Cross validation to define `gamma` and `cost` for Ra:
-
-```{r}
-set.seed(1)
-tune.out1 <- tune(svm, Ra ~ x1+x2+x3, data = plan_respostas, kernel = "linear",
-                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
-                               gamma = c(0, 0.5, 1, 2)))
-# summary(tune.out1)
-tune.out1$best.parameters
-```
-
-Cross-validation to define `kernel` for Fc:
+Cross-validation to define `kernel`, `gamma` and `cost` for Fc:
 
 ```{r}
 set.seed(1)
@@ -933,18 +922,7 @@ tune.out <- tune(svm, Fc ~ x1+x2+x3, data = plan_respostas,
 tune.out$best.parameters
 ```
 
-Cross validation to define `gamma` and `cost` for Fc:
-
-```{r}
-set.seed(1)
-tune.out1 <- tune(svm, Fc ~ x1+x2+x3, data = plan_respostas, kernel = "linear",
-                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
-                               gamma = c(0, 0.5, 1, 2)))
-# summary(tune.out1)
-tune.out1$best.parameters
-```
-
-Cross-validation to define `kernel` for Ront:
+Cross-validation to define `kernel`, `gamma` and `cost` for Ront:
 
 ```{r}
 set.seed(1)
@@ -954,17 +932,6 @@ tune.out <- tune(svm, Ront ~ x1+x2+x3, data = plan_respostas,
                                kernel = c("linear", "radial", "polynomial")))
 # summary(tune.out)
 tune.out$best.parameters
-```
-
-Cross validation to define `gamma` and `cost` for Ront:
-
-```{r}
-set.seed(1)
-tune.out1 <- tune(svm, Ront ~ x1+x2+x3, data = plan_respostas, kernel = "radial",
-                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10),
-                               gamma = c(0, 0.5, 1, 2)))
-# summary(tune.out1)
-tune.out1$best.parameters
 ```
 
 ## XGB hyperparameters' selection:
@@ -2461,7 +2428,6 @@ ggplot(importance_matrix_Ront, aes(x= reorder(Feature, Gain), y = Gain)) +
   theme_bw()
 ```
 
-
 ## Multi-objective evolutionary optimization
 
 ### Solving through caramel
@@ -2519,7 +2485,7 @@ prec <- matrix(1.e-7, nrow = 1, ncol = nobj)
 Solving through caramel:
 
 ```{r, message=FALSE, output=FALSE}
-set.seed(7)
+set.seed(10)
 start = Sys.time()
 opttri2 <-
   caRamel(nobj,
@@ -2557,6 +2523,7 @@ scatter3D(opttri2_res_caRamel$Fc,
           ylab ="Ront", 
           zlab = "MRR")
 ```
+Hypervolume, spacing and time were calculated in the paper considering 5 realizations of the methods. To do that it is important to comment the line with the command `set.seed()` before running the optimization.
 
 Hypervolume calculation for caramel:
 
@@ -2595,7 +2562,6 @@ g <- function(x){
 }
 ```
 
-
 Three-objective optimization function considering Fc, Ront, and MRR:
 
 ```{r}
@@ -2621,6 +2587,7 @@ xgb_Fc_Ront_MRR <- function(x){
 Solving through MOPSOCD:
 
 ```{r}
+set.seed(11)
 start = Sys.time()
 opttri2 <- mopsocd(fn = xgb_Fc_Ront_MRR, 
                    gn = g,
